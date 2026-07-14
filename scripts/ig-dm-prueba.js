@@ -67,76 +67,57 @@ function waitForElement(selector, timeout = 8000) {
   });
 }
 
-// === PARSE TIMESTAMP TO DAYS ===
-function parseTimestampToDays(timeText) {
-  if (!timeText) return 999;
-  const t = timeText.trim().toLowerCase();
-
-  if (t === 'now' || t === 'active now' || t === 'active') return 0;
-
-  // Order matters: check "mo" (months) before "m" (minutes)
-  let mo = t.match(/^(\d+)\s*mo/);
-  if (mo) return parseInt(mo[1]) * 30;
-
-  // Minutes
-  let m = t.match(/^(\d+)\s*m\b/);
-  if (m) return 0;
-
-  // Hours
-  let h = t.match(/^(\d+)\s*h/);
-  if (h) return 0;
-
-  // Days
-  let d = t.match(/^(\d+)\s*d/);
-  if (d) return parseInt(d[1]);
-
-  // Weeks
-  let w = t.match(/^(\d+)\s*w/);
-  if (w) return parseInt(w[1]) * 7;
-
-  // Years
-  let y = t.match(/^(\d+)\s*y/);
-  if (y) return parseInt(y[1]) * 365;
-
-  return 999;
-}
-
 // === DEBUG: Inspect Instagram DOM ===
 window.igDmDebug = function () {
   console.log('%c=== IG DM DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
   console.log('URL:', window.location.href);
 
-  // Find scrollable container
-  const scrollContainer = findScrollContainer();
-  console.log('Scroll container:', scrollContainer ? {
-    left: Math.round(scrollContainer.getBoundingClientRect().left),
-    top: Math.round(scrollContainer.getBoundingClientRect().top),
-    scrollHeight: scrollContainer.scrollHeight,
-    clientHeight: scrollContainer.clientHeight,
+  const sc = findScrollContainer();
+  console.log('Scroll container:', sc ? {
+    left: Math.round(sc.getBoundingClientRect().left),
+    top: Math.round(sc.getBoundingClientRect().top),
+    width: Math.round(sc.getBoundingClientRect().width),
+    height: Math.round(sc.getBoundingClientRect().height),
+    scrollHeight: sc.scrollHeight,
+    childCount: sc.children.length,
   } : 'NOT FOUND');
 
-  // Find timestamp spans
-  const allEls = document.querySelectorAll('span, div, time');
-  const timestamps = [];
-  for (const el of allEls) {
-    const text = el.textContent.trim();
-    if (text.length > 0 && text.length < 15) {
-      if (/^\d+\s*[mhdw]/i.test(text) || /^now$/i.test(text) || /^active/i.test(text)) {
-        const rect = el.getBoundingClientRect();
-        timestamps.push({ text, tag: el.tagName, top: Math.round(rect.top), left: Math.round(rect.left) });
+  if (sc) {
+    console.log('Direct children:', sc.children.length);
+    for (let i = 0; i < Math.min(5, sc.children.length); i++) {
+      const child = sc.children[i];
+      const dirAuto = child.querySelector('[dir="auto"]');
+      console.log(`  child[${i}]:`, {
+        tag: child.tagName,
+        hasDirAuto: !!dirAuto,
+        dirAutoText: dirAuto?.textContent?.substring(0, 40),
+        textPreview: child.textContent?.substring(0, 80),
+        childCount: child.children.length,
+      });
+    }
+
+    const allDirAuto = sc.querySelectorAll('[dir="auto"]');
+    console.log('All dir="auto" inside scroll container:', allDirAuto.length);
+    const seen = new Set();
+    for (const el of allDirAuto) {
+      const text = el.textContent.trim();
+      if (text.length < 1 || text.length > 100) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 260) continue;
+      const key = Math.round(rect.top) + '-' + Math.round(rect.left);
+      if (!seen.has(key)) {
+        seen.add(key);
+        console.log(`  dir=auto: "${text.substring(0, 40)}" at top=${Math.round(rect.top)} left=${Math.round(rect.left)}`);
       }
     }
   }
-  console.log('Timestamps found:', timestamps.length);
-  timestamps.slice(0, 20).forEach((t, i) => console.log(`  ${i + 1}.`, t));
 
-  // Find conversation items using new approach
   const items = findConversationItems();
   console.log('Conversation items found:', items.length);
-  items.slice(0, 10).forEach((item, i) => {
-    const info = extractConvInfo(item);
+  for (let i = 0; i < Math.min(10, items.length); i++) {
+    const info = extractConvInfo(items[i]);
     console.log(`  ${i + 1}.`, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays, isGroup: info.isGroup });
-  });
+  }
 
   console.log('%c=== END DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
 };
@@ -145,7 +126,6 @@ window.igDmDebug = function () {
 function findScrollContainer() {
   const allDivs = document.querySelectorAll('div');
 
-  // Strategy 1: scrollable div in left panel with content
   for (const div of allDivs) {
     const style = window.getComputedStyle(div);
     if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
@@ -156,7 +136,6 @@ function findScrollContainer() {
     }
   }
 
-  // Strategy 2: any scrollable div in left half
   for (const div of allDivs) {
     const style = window.getComputedStyle(div);
     if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
@@ -167,7 +146,6 @@ function findScrollContainer() {
     }
   }
 
-  // Strategy 3: role="list" or role="navigation"
   const containers = document.querySelectorAll('[role="list"], [role="navigation"], [role="listbox"]');
   for (const container of containers) {
     const rect = container.getBoundingClientRect();
@@ -180,12 +158,8 @@ function findScrollContainer() {
 // === CHECK IF ELEMENT IS A NOTE BUBBLE ===
 function isNoteBubble(el) {
   const rect = el.getBoundingClientRect();
-
-  // Notes are above the "Mensajes" header (typically top < 270)
-  // Use 260 as threshold to be safe
   if (rect.top < 260) return true;
 
-  // Check for horizontal scroll parent (notes scroll horizontally)
   let parent = el.parentElement;
   while (parent && parent !== document.body) {
     const style = window.getComputedStyle(parent);
@@ -208,81 +182,108 @@ function findConversationItems() {
     return [];
   }
 
-  // Find all timestamp-like elements (spans, divs, time) inside the scroll container
-  const allEls = scrollContainer.querySelectorAll('span, div, time');
-  const timestampEls = [];
+  const items = [];
+  const seen = new Set();
 
-  for (const el of allEls) {
-    const text = el.textContent.trim();
-    if (text.length === 0 || text.length > 15) continue;
+  // Approach 1: Direct children of scroll container that have dir="auto" (names)
+  for (const child of scrollContainer.children) {
+    const nameEl = child.querySelector('[dir="auto"]');
+    if (!nameEl) continue;
+    if (isNoteBubble(child)) continue;
+    const rect = child.getBoundingClientRect();
+    if (rect.left > 500 || rect.top < 260) continue;
+    if (!seen.has(child)) {
+      seen.add(child);
+      items.push(child);
+    }
+  }
 
-    // Match timestamps: "5m", "2 d", "1h", "3 w", "now", "Active now"
-    if (/^\d+\s*[mhdw]/i.test(text) || /^now$/i.test(text) || /^active\s*now$/i.test(text)) {
-      const rect = el.getBoundingClientRect();
-      if (rect.left < 500 && rect.top > 260) {
-        timestampEls.push(el);
+  // Approach 2: If no direct children worked, try grandchildren
+  if (items.length === 0) {
+    log('Approach 1 (direct children) falló. Probando grandchildren...', 'warn');
+    for (const child of scrollContainer.children) {
+      for (const grandchild of child.children) {
+        const nameEl = grandchild.querySelector('[dir="auto"]');
+        if (!nameEl) continue;
+        if (isNoteBubble(grandchild)) continue;
+        const rect = grandchild.getBoundingClientRect();
+        if (rect.left > 500 || rect.top < 260) continue;
+        if (!seen.has(grandchild)) {
+          seen.add(grandchild);
+          items.push(grandchild);
+        }
       }
     }
   }
 
-  log(`Timestamps encontrados: ${timestampEls.length}`, 'info');
+  // Approach 3: If still nothing, find all dir="auto" in scroll container and walk up
+  if (items.length === 0) {
+    log('Approach 2 (grandchildren) falló. Probando walk-up from dir="auto"...', 'warn');
+    const nameEls = scrollContainer.querySelectorAll('[dir="auto"]');
+    for (const nameEl of nameEls) {
+      const text = nameEl.textContent.trim();
+      if (text.length < 1 || text.length > 100) continue;
+      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
+      if (/^(now|active|ahora|activo|seen|visto)/i.test(text)) continue;
 
-  if (timestampEls.length === 0) {
-    log('No se encontraron timestamps. Ejecuta igDmDebug() para diagnosticar.', 'error');
-    return [];
+      const rect = nameEl.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 260) continue;
+
+      let parent = nameEl.parentElement;
+      let attempts = 0;
+      while (parent && parent !== scrollContainer && parent !== document.body && attempts < 10) {
+        if (parent.parentElement === scrollContainer || 
+            (parent.parentElement && parent.parentElement.parentElement === scrollContainer)) {
+          if (!isNoteBubble(parent)) {
+            const parentRect = parent.getBoundingClientRect();
+            if (parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
+              if (!seen.has(parent)) {
+                seen.add(parent);
+                items.push(parent);
+              }
+            }
+          }
+          break;
+        }
+        parent = parent.parentElement;
+        attempts++;
+      }
+    }
   }
 
-  // For each timestamp, walk up to find the conversation item container
-  // The conversation item is the element that:
-  // 1. Contains the timestamp
-  // 2. Is a direct child (or close descendant) of the scroll container
-  // 3. Also contains a name (dir="auto" element)
-  const items = [];
-  const seen = new Set();
+  // Approach 4: Last resort — find dir="auto" in the whole left panel (not just scroll container)
+  if (items.length === 0) {
+    log('Approach 3 falló. Probando broad scan del panel izquierdo...', 'warn');
+    const allDirAuto = document.querySelectorAll('[dir="auto"]');
+    for (const nameEl of allDirAuto) {
+      const text = nameEl.textContent.trim();
+      if (text.length < 1 || text.length > 100) continue;
+      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
+      if (/^(now|active|ahora|activo|seen|visto|tu nota)/i.test(text)) continue;
 
-  for (const tsEl of timestampEls) {
-    let parent = tsEl.parentElement;
-    let attempts = 0;
+      const rect = nameEl.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 260) continue;
 
-    while (parent && parent !== document.body && attempts < 10) {
-      // Check if this parent is the scroll container itself (too broad)
-      if (parent === scrollContainer) break;
-
-      // Check if parent is a direct child of scroll container
-      if (parent.parentElement === scrollContainer) {
-        // Verify it has a name-like element (dir="auto")
-        const nameEl = parent.querySelector('[dir="auto"]');
-        if (nameEl && !isNoteBubble(parent)) {
-          if (!seen.has(parent)) {
+      let parent = nameEl.parentElement;
+      let attempts = 0;
+      while (parent && parent !== document.body && attempts < 8) {
+        const parentText = parent.textContent || '';
+        const parentRect = parent.getBoundingClientRect();
+        if (parentText.length > 5 && parentText.length < 300 &&
+            parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
+          if (!isNoteBubble(parent) && !seen.has(parent)) {
             seen.add(parent);
             items.push(parent);
           }
           break;
         }
+        parent = parent.parentElement;
+        attempts++;
       }
-
-      // Also check if parent contains dir="auto" and is small enough to be one item
-      const parentText = parent.textContent || '';
-      if (parentText.length > 5 && parentText.length < 300) {
-        const nameEl = parent.querySelector('[dir="auto"]');
-        if (nameEl && !isNoteBubble(parent)) {
-          const parentRect = parent.getBoundingClientRect();
-          if (parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 150) {
-            if (!seen.has(parent)) {
-              seen.add(parent);
-              items.push(parent);
-            }
-            break;
-          }
-        }
-      }
-
-      parent = parent.parentElement;
-      attempts++;
     }
   }
 
-  // Deduplicate: remove items that are children of other items
+  // Deduplicate
   const filtered = items.filter((item) => {
     return !items.some((other) => other !== item && other.contains(item));
   });
@@ -291,39 +292,103 @@ function findConversationItems() {
   return filtered;
 }
 
-// === EXTRACT CONVERSATION INFO ===
-function extractConvInfo(item) {
-  const text = item.textContent || '';
-
-  // Extract timestamp
-  const timeMatch = text.match(/(\d+\s*[mhdw]|now|active)/i);
-  const timestamp = timeMatch ? timeMatch[1] : '';
-
-  // Extract name - usually the first meaningful text line
-  // Try to find the name element
-  const nameEl = item.querySelector('span, div[dir="auto"]') || item;
-  let name = '';
-
-  // Try multiple strategies to get the name
-  const spans = item.querySelectorAll('span, div[dir="auto"]');
-  for (const span of spans) {
-    const spanText = span.textContent.trim();
-    if (spanText.length > 0 && spanText.length < 100) {
-      // Skip if it looks like a timestamp
-      if (!/^\d+\s*[mhdw]/i.test(spanText) && spanText.toLowerCase() !== 'now' && spanText.toLowerCase() !== 'active') {
-        name = spanText;
-        break;
+// === EXTRACT TIMESTAMP FROM CONVERSATION ITEM ===
+function extractTimestamp(item) {
+  // Method 1: <time> element with datetime attribute
+  const timeEl = item.querySelector('time');
+  if (timeEl) {
+    const datetime = timeEl.getAttribute('datetime') || timeEl.getAttribute('title');
+    if (datetime) {
+      const date = new Date(datetime);
+      if (!isNaN(date)) {
+        const now = new Date();
+        const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+        return { text: timeEl.textContent.trim(), days: diffDays };
       }
     }
   }
 
-  // Check if it's a group
-  const isGroup = /group|grupo/i.test(text) || text.includes('·') || item.querySelectorAll('img, [style*="border-radius"]').length > 1;
+  // Method 2: Look for spans/elements with timestamp-like text
+  const allEls = item.querySelectorAll('span, div, time, abbr');
+  for (const el of allEls) {
+    const text = el.textContent.trim();
+    if (text.length === 0 || text.length > 20) continue;
+
+    // Skip if this element has children (it's a container, not a leaf timestamp)
+    if (el.children.length > 1) continue;
+
+    const days = parseTimestampToDays(text);
+    if (days < 999) {
+      return { text, days };
+    }
+  }
+
+  return { text: '', days: 999 };
+}
+
+// === PARSE TIMESTAMP TO DAYS (English + Spanish) ===
+function parseTimestampToDays(timeText) {
+  if (!timeText) return 999;
+  const t = timeText.trim().toLowerCase();
+
+  // Now / Active (English + Spanish)
+  if (t === 'now' || t === 'active now' || t === 'active' ||
+      t === 'ahora' || t === 'activo ahora' || t === 'activo' ||
+      t === 'en línea' || t === 'en linea') return 0;
+
+  // Months: "mo" (EN), "mes" / "meses" (ES) — check before minutes!
+  let mo = t.match(/^(\d+)\s*(mo|mes|meses)/);
+  if (mo) return parseInt(mo[1]) * 30;
+
+  // Weeks: "w" (EN), "sem" / "semana" / "semanas" (ES)
+  let w = t.match(/^(\d+)\s*(w|sem|semana|semanas)/);
+  if (w) return parseInt(w[1]) * 7;
+
+  // Days: "d" (EN/ES), "día" / "días" (ES)
+  let d = t.match(/^(\d+)\s*d/);
+  if (d) return parseInt(d[1]);
+
+  // Hours: "h" (EN/ES)
+  let h = t.match(/^(\d+)\s*h/);
+  if (h) return 0;
+
+  // Minutes: "m" (EN), "min" / "minuto" / "minutos" (ES) — check after months!
+  let m = t.match(/^(\d+)\s*(min|minuto|minutos|m)/);
+  if (m) return 0;
+
+  // Years: "y" (EN), "a" / "año" / "años" (ES)
+  let y = t.match(/^(\d+)\s*(y|a|año|años)/);
+  if (y) return parseInt(y[1]) * 365;
+
+  return 999;
+}
+
+// === EXTRACT CONVERSATION INFO ===
+function extractConvInfo(item) {
+  const text = item.textContent || '';
+
+  // Extract name from first dir="auto" element that isn't a timestamp/preview
+  const nameEls = item.querySelectorAll('[dir="auto"]');
+  let name = '';
+  for (const el of nameEls) {
+    const elText = el.textContent.trim();
+    if (elText.length < 1 || elText.length > 100) continue;
+    if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(elText)) continue;
+    if (/^(now|active|ahora|activo|seen|visto)/i.test(elText)) continue;
+    name = elText;
+    break;
+  }
+
+  // Extract timestamp using new function
+  const ts = extractTimestamp(item);
+
+  // Group detection — only text-based, no DOM structure checks (those cause false positives)
+  const isGroup = /group|grupo|\d+\s*(people|personas|miembros|members)/i.test(text);
 
   return {
     name: name || 'unknown',
-    timestamp: timestamp,
-    timeDays: parseTimestampToDays(timestamp),
+    timestamp: ts.text,
+    timeDays: ts.days,
     isGroup: isGroup,
     element: item,
   };

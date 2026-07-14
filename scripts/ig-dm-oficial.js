@@ -67,62 +67,26 @@ function waitForElement(selector, timeout = 8000) {
   });
 }
 
-// === PARSE TIMESTAMP TO DAYS ===
-function parseTimestampToDays(timeText) {
-  if (!timeText) return 999;
-  const t = timeText.trim().toLowerCase();
-
-  if (t === 'now' || t === 'active now' || t === 'active') return 0;
-
-  // Order matters: check "mo" (months) before "m" (minutes)
-  let mo = t.match(/^(\d+)\s*mo/);
-  if (mo) return parseInt(mo[1]) * 30;
-
-  // Minutes
-  let m = t.match(/^(\d+)\s*m\b/);
-  if (m) return 0;
-
-  // Hours
-  let h = t.match(/^(\d+)\s*h/);
-  if (h) return 0;
-
-  // Days
-  let d = t.match(/^(\d+)\s*d/);
-  if (d) return parseInt(d[1]);
-
-  // Weeks
-  let w = t.match(/^(\d+)\s*w/);
-  if (w) return parseInt(w[1]) * 7;
-
-  // Years
-  let y = t.match(/^(\d+)\s*y/);
-  if (y) return parseInt(y[1]) * 365;
-
-  return 999;
-}
-
 // === DEBUG: Inspect Instagram DOM ===
 window.igDmDebug = function () {
   console.log('%c=== IG DM DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
   console.log('URL:', window.location.href);
-  const scrollContainer = findScrollContainer();
-  console.log('Scroll container:', scrollContainer ? { left: Math.round(scrollContainer.getBoundingClientRect().left), top: Math.round(scrollContainer.getBoundingClientRect().top), scrollHeight: scrollContainer.scrollHeight } : 'NOT FOUND');
-  const allEls = document.querySelectorAll('span, div, time');
-  const timestamps = [];
-  for (const el of allEls) {
-    const text = el.textContent.trim();
-    if (text.length > 0 && text.length < 15) {
-      if (/^\d+\s*[mhdw]/i.test(text) || /^now$/i.test(text) || /^active/i.test(text)) {
-        const rect = el.getBoundingClientRect();
-        timestamps.push({ text, tag: el.tagName, top: Math.round(rect.top), left: Math.round(rect.left) });
-      }
+  const sc = findScrollContainer();
+  console.log('Scroll container:', sc ? { left: Math.round(sc.getBoundingClientRect().left), top: Math.round(sc.getBoundingClientRect().top), scrollHeight: sc.scrollHeight, childCount: sc.children.length } : 'NOT FOUND');
+  if (sc) {
+    console.log('Direct children:', sc.children.length);
+    for (let i = 0; i < Math.min(5, sc.children.length); i++) {
+      const child = sc.children[i];
+      const dirAuto = child.querySelector('[dir="auto"]');
+      console.log(`  child[${i}]:`, { tag: child.tagName, hasDirAuto: !!dirAuto, dirAutoText: dirAuto?.textContent?.substring(0, 40), textPreview: child.textContent?.substring(0, 80), childCount: child.children.length });
     }
   }
-  console.log('Timestamps found:', timestamps.length);
-  timestamps.slice(0, 20).forEach((t, i) => console.log(`  ${i + 1}.`, t));
   const items = findConversationItems();
   console.log('Conversation items found:', items.length);
-  items.slice(0, 10).forEach((item, i) => { const info = extractConvInfo(item); console.log(`  ${i + 1}.`, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays }); });
+  for (let i = 0; i < Math.min(10, items.length); i++) {
+    const info = extractConvInfo(items[i]);
+    console.log(`  ${i + 1}.`, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays, isGroup: info.isGroup });
+  }
   console.log('%c=== END DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
 };
 
@@ -180,59 +144,88 @@ function findConversationItems() {
     return [];
   }
 
-  const allEls = scrollContainer.querySelectorAll('span, div, time');
-  const timestampEls = [];
+  const items = [];
+  const seen = new Set();
 
-  for (const el of allEls) {
-    const text = el.textContent.trim();
-    if (text.length === 0 || text.length > 15) continue;
-    if (/^\d+\s*[mhdw]/i.test(text) || /^now$/i.test(text) || /^active\s*now$/i.test(text)) {
-      const rect = el.getBoundingClientRect();
-      if (rect.left < 500 && rect.top > 260) {
-        timestampEls.push(el);
+  // Approach 1: Direct children of scroll container that have dir="auto"
+  for (const child of scrollContainer.children) {
+    const nameEl = child.querySelector('[dir="auto"]');
+    if (!nameEl) continue;
+    if (isNoteBubble(child)) continue;
+    const rect = child.getBoundingClientRect();
+    if (rect.left > 500 || rect.top < 260) continue;
+    if (!seen.has(child)) { seen.add(child); items.push(child); }
+  }
+
+  // Approach 2: Grandchildren
+  if (items.length === 0) {
+    log('Approach 1 falló. Probando grandchildren...', 'warn');
+    for (const child of scrollContainer.children) {
+      for (const grandchild of child.children) {
+        const nameEl = grandchild.querySelector('[dir="auto"]');
+        if (!nameEl) continue;
+        if (isNoteBubble(grandchild)) continue;
+        const rect = grandchild.getBoundingClientRect();
+        if (rect.left > 500 || rect.top < 260) continue;
+        if (!seen.has(grandchild)) { seen.add(grandchild); items.push(grandchild); }
       }
     }
   }
 
-  log(`Timestamps encontrados: ${timestampEls.length}`, 'info');
-
-  if (timestampEls.length === 0) {
-    log('No se encontraron timestamps. Ejecuta igDmDebug() para diagnosticar.', 'error');
-    return [];
-  }
-
-  const items = [];
-  const seen = new Set();
-
-  for (const tsEl of timestampEls) {
-    let parent = tsEl.parentElement;
-    let attempts = 0;
-
-    while (parent && parent !== document.body && attempts < 10) {
-      if (parent === scrollContainer) break;
-
-      if (parent.parentElement === scrollContainer) {
-        const nameEl = parent.querySelector('[dir="auto"]');
-        if (nameEl && !isNoteBubble(parent)) {
-          if (!seen.has(parent)) { seen.add(parent); items.push(parent); }
+  // Approach 3: Walk up from dir="auto" inside scroll container
+  if (items.length === 0) {
+    log('Approach 2 falló. Probando walk-up from dir="auto"...', 'warn');
+    const nameEls = scrollContainer.querySelectorAll('[dir="auto"]');
+    for (const nameEl of nameEls) {
+      const text = nameEl.textContent.trim();
+      if (text.length < 1 || text.length > 100) continue;
+      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
+      if (/^(now|active|ahora|activo|seen|visto)/i.test(text)) continue;
+      const rect = nameEl.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 260) continue;
+      let parent = nameEl.parentElement;
+      let attempts = 0;
+      while (parent && parent !== scrollContainer && parent !== document.body && attempts < 10) {
+        if (parent.parentElement === scrollContainer ||
+            (parent.parentElement && parent.parentElement.parentElement === scrollContainer)) {
+          if (!isNoteBubble(parent)) {
+            const parentRect = parent.getBoundingClientRect();
+            if (parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
+              if (!seen.has(parent)) { seen.add(parent); items.push(parent); }
+            }
+          }
           break;
         }
+        parent = parent.parentElement;
+        attempts++;
       }
+    }
+  }
 
-      const parentText = parent.textContent || '';
-      if (parentText.length > 5 && parentText.length < 300) {
-        const nameEl = parent.querySelector('[dir="auto"]');
-        if (nameEl && !isNoteBubble(parent)) {
-          const parentRect = parent.getBoundingClientRect();
-          if (parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 150) {
-            if (!seen.has(parent)) { seen.add(parent); items.push(parent); }
-            break;
-          }
+  // Approach 4: Broad scan of left panel
+  if (items.length === 0) {
+    log('Approach 3 falló. Probando broad scan del panel izquierdo...', 'warn');
+    const allDirAuto = document.querySelectorAll('[dir="auto"]');
+    for (const nameEl of allDirAuto) {
+      const text = nameEl.textContent.trim();
+      if (text.length < 1 || text.length > 100) continue;
+      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
+      if (/^(now|active|ahora|activo|seen|visto|tu nota)/i.test(text)) continue;
+      const rect = nameEl.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 260) continue;
+      let parent = nameEl.parentElement;
+      let attempts = 0;
+      while (parent && parent !== document.body && attempts < 8) {
+        const parentText = parent.textContent || '';
+        const parentRect = parent.getBoundingClientRect();
+        if (parentText.length > 5 && parentText.length < 300 &&
+            parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
+          if (!isNoteBubble(parent) && !seen.has(parent)) { seen.add(parent); items.push(parent); }
+          break;
         }
+        parent = parent.parentElement;
+        attempts++;
       }
-
-      parent = parent.parentElement;
-      attempts++;
     }
   }
 
@@ -244,39 +237,86 @@ function findConversationItems() {
   return filtered;
 }
 
-// === EXTRACT CONVERSATION INFO ===
-function extractConvInfo(item) {
-  const text = item.textContent || '';
-
-  // Extract timestamp
-  const timeMatch = text.match(/(\d+\s*[mhdw]|now|active)/i);
-  const timestamp = timeMatch ? timeMatch[1] : '';
-
-  // Extract name - usually the first meaningful text line
-  // Try to find the name element
-  const nameEl = item.querySelector('span, div[dir="auto"]') || item;
-  let name = '';
-
-  // Try multiple strategies to get the name
-  const spans = item.querySelectorAll('span, div[dir="auto"]');
-  for (const span of spans) {
-    const spanText = span.textContent.trim();
-    if (spanText.length > 0 && spanText.length < 100) {
-      // Skip if it looks like a timestamp
-      if (!/^\d+\s*[mhdw]/i.test(spanText) && spanText.toLowerCase() !== 'now' && spanText.toLowerCase() !== 'active') {
-        name = spanText;
-        break;
+// === EXTRACT TIMESTAMP FROM CONVERSATION ITEM ===
+function extractTimestamp(item) {
+  const timeEl = item.querySelector('time');
+  if (timeEl) {
+    const datetime = timeEl.getAttribute('datetime') || timeEl.getAttribute('title');
+    if (datetime) {
+      const date = new Date(datetime);
+      if (!isNaN(date)) {
+        const now = new Date();
+        const diffDays = Math.floor((now - date) / (1000 * 60 * 60 * 24));
+        return { text: timeEl.textContent.trim(), days: diffDays };
       }
     }
   }
 
-  // Check if it's a group
-  const isGroup = /group|grupo/i.test(text) || text.includes('·') || item.querySelectorAll('img, [style*="border-radius"]').length > 1;
+  const allEls = item.querySelectorAll('span, div, time, abbr');
+  for (const el of allEls) {
+    const text = el.textContent.trim();
+    if (text.length === 0 || text.length > 20) continue;
+    if (el.children.length > 1) continue;
+    const days = parseTimestampToDays(text);
+    if (days < 999) return { text, days };
+  }
+
+  return { text: '', days: 999 };
+}
+
+// === PARSE TIMESTAMP TO DAYS (English + Spanish) ===
+function parseTimestampToDays(timeText) {
+  if (!timeText) return 999;
+  const t = timeText.trim().toLowerCase();
+
+  if (t === 'now' || t === 'active now' || t === 'active' ||
+      t === 'ahora' || t === 'activo ahora' || t === 'activo' ||
+      t === 'en línea' || t === 'en linea') return 0;
+
+  let mo = t.match(/^(\d+)\s*(mo|mes|meses)/);
+  if (mo) return parseInt(mo[1]) * 30;
+
+  let w = t.match(/^(\d+)\s*(w|sem|semana|semanas)/);
+  if (w) return parseInt(w[1]) * 7;
+
+  let d = t.match(/^(\d+)\s*d/);
+  if (d) return parseInt(d[1]);
+
+  let h = t.match(/^(\d+)\s*h/);
+  if (h) return 0;
+
+  let m = t.match(/^(\d+)\s*(min|minuto|minutos|m)/);
+  if (m) return 0;
+
+  let y = t.match(/^(\d+)\s*(y|a|año|años)/);
+  if (y) return parseInt(y[1]) * 365;
+
+  return 999;
+}
+
+// === EXTRACT CONVERSATION INFO ===
+function extractConvInfo(item) {
+  const text = item.textContent || '';
+
+  const nameEls = item.querySelectorAll('[dir="auto"]');
+  let name = '';
+  for (const el of nameEls) {
+    const elText = el.textContent.trim();
+    if (elText.length < 1 || elText.length > 100) continue;
+    if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(elText)) continue;
+    if (/^(now|active|ahora|activo|seen|visto)/i.test(elText)) continue;
+    name = elText;
+    break;
+  }
+
+  const ts = extractTimestamp(item);
+
+  const isGroup = /group|grupo|\d+\s*(people|personas|miembros|members)/i.test(text);
 
   return {
     name: name || 'unknown',
-    timestamp: timestamp,
-    timeDays: parseTimestampToDays(timestamp),
+    timestamp: ts.text,
+    timeDays: ts.days,
     isGroup: isGroup,
     element: item,
   };
