@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Instagram DM Simulator</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+body { background: #000; color: #fff; display: flex; height: 100vh; }
+
+/* Conversation list - left panel */
+.conv-list {
+  width: 350px;
+  border-right: 1px solid #333;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.conv-list-header {
+  padding: 16px;
+  font-weight: 700;
+  font-size: 18px;
+  border-bottom: 1px solid #333;
+  position: sticky;
+  top: 0;
+  background: #000;
+  z-index: 1;
+}
+.conv-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  gap: 12px;
+  border-bottom: 1px solid #1a1a1a;
+}
+.conv-item:hover { background: #1a1a1a; }
+.conv-item.active { background: #1a1a1a; }
+.conv-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: linear-gradient(45deg, #f09433, #e6683c, #dc2743, #cc2366, #bc1888);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+}
+.conv-info { flex: 1; min-width: 0; }
+.conv-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv-preview { font-size: 13px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.conv-time { font-size: 11px; color: #888; flex-shrink: 0; }
+.conv-group-badge { font-size: 10px; color: #aaa; background: #333; padding: 2px 6px; border-radius: 4px; margin-left: 4px; }
+
+/* Chat area - right panel */
+.chat-area { flex: 1; display: flex; flex-direction: column; }
+.chat-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.chat-header-name { font-weight: 600; font-size: 16px; }
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chat-msg {
+  max-width: 60%;
+  padding: 10px 14px;
+  border-radius: 20px;
+  font-size: 14px;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+.chat-msg.received { background: #262626; align-self: flex-start; }
+.chat-msg.sent { background: #3797F0; align-self: flex-end; }
+
+/* Message input area */
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid #333;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.msg-input-container {
+  flex: 1;
+  border: 1px solid #333;
+  border-radius: 22px;
+  padding: 10px 16px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.msg-input {
+  flex: 1;
+  outline: none;
+  color: #fff;
+  font-size: 14px;
+  min-height: 20px;
+  word-wrap: break-word;
+}
+.msg-input:empty::before {
+  content: 'Message...';
+  color: #888;
+}
+.send-btn {
+  color: #3797F0;
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 8px 12px;
+  user-select: none;
+  opacity: 0.4;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.send-btn.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Popup overlay */
+.popup-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.7);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.popup-overlay.show { display: flex; }
+.popup-box {
+  background: #1a1a1a;
+  border-radius: 12px;
+  padding: 24px;
+  text-align: center;
+  max-width: 400px;
+}
+.popup-box h3 { margin-bottom: 12px; }
+.popup-box button {
+  background: #3797F0;
+  color: #fff;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+/* Log panel */
+.log-panel {
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 400px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: rgba(0,0,0,0.9);
+  border: 1px solid #333;
+  padding: 8px;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+  z-index: 200;
+  display: none;
+}
+.log-panel.show { display: block; }
+.log-entry { padding: 2px 0; border-bottom: 1px solid #1a1a1a; }
+.log-entry.success { color: #4CAF50; }
+.log-entry.error { color: #f44336; }
+.log-entry.info { color: #2196F3; }
+.log-entry.warn { color: #FF9800; }
+</style>
+</head>
+<body>
+
+<!-- Conversation List -->
+<div class="conv-list" id="convList" role="list">
+  <div class="conv-list-header">Messages</div>
+  <!-- Conversations will be injected by JS -->
+</div>
+
+<!-- Chat Area -->
+<div class="chat-area">
+  <div class="chat-header">
+    <div class="chat-header-name" id="chatHeaderName">Select a conversation</div>
+  </div>
+  <div class="chat-messages" id="chatMessages">
+    <div style="color: #888; text-align: center; margin-top: 40px;">Select a conversation to start messaging</div>
+  </div>
+  <div class="chat-input-area">
+    <div class="msg-input-container">
+      <div class="msg-input" role="textbox" aria-label="Message" contenteditable="true" data-lexical-editor="true" id="msgInput"></div>
+    </div>
+    <div class="send-btn" role="button" id="sendBtn">Send</div>
+  </div>
+</div>
+
+<!-- Popup overlay for testing captcha/popup detection -->
+<div class="popup-overlay" id="popupOverlay">
+  <div class="popup-box">
+    <h3>Popup Test</h3>
+    <p>This is a simulated popup</p>
+    <button onclick="document.getElementById('popupOverlay').classList.remove('show')">Close</button>
+  </div>
+</div>
+
+<!-- Log panel -->
+<div class="log-panel" id="logPanel"></div>
+
+<script>
+// === SIMULATION DATA ===
+const conversations = [
+  { id: 1, name: "carlos_garcia", displayName: "Carlos García", time: "5m", timeDays: 0, isGroup: false, preview: "Hola que tal" },
+  { id: 2, name: "lucia_martin", displayName: "Lucía Martín", time: "1h", timeDays: 0, isGroup: false, preview: "Vale nos vemos" },
+  { id: 3, name: "grupo_fiesta", displayName: "Grupo Fiesta Viernes", time: "2h", timeDays: 0, isGroup: true, preview: "Juan: Yo voy!" },
+  { id: 4, name: "pablo_ruiz", displayName: "Pablo Ruiz", time: "3h", timeDays: 0, isGroup: false, preview: "Gracias!" },
+  { id: 5, name: "maria_lopez", displayName: "María López", time: "5h", timeDays: 0, isGroup: false, preview: "Ok perfecto" },
+  { id: 6, name: "javier_soto", displayName: "Javier Soto", time: "8h", timeDays: 0, isGroup: false, preview: "Seen" },
+  { id: 7, name: "ana_diaz", displayName: "Ana Díaz", time: "12h", timeDays: 0, isGroup: false, preview: "Jajaja cierto" },
+  { id: 8, name: "diego_moreno", displayName: "Diego Moreno", time: "1d", timeDays: 1, isGroup: false, preview: "De acuerdo" },
+  { id: 9, name: "sara_gil", displayName: "Sara Gil", time: "2d", timeDays: 2, isGroup: false, preview: "Vale" },
+  { id: 10, name: "grupo_chicas", displayName: "Grupo Chicas Discoteca", time: "2d", timeDays: 2, isGroup: true, preview: "Elena: Yo voy!" },
+  { id: 11, name: "marcos_vega", displayName: "Marcos Vega", time: "3d", timeDays: 3, isGroup: false, preview: "Perfecto" },
+  { id: 12, name: "elena_castro", displayName: "Elena Castro", time: "4d", timeDays: 4, isGroup: false, preview: "Gracias!" },
+  { id: 13, name: "fernando_ortega", displayName: "Fernando Ortega", time: "5d", timeDays: 5, isGroup: false, preview: "Ok" },
+  { id: 14, name: "carmen_rivas", displayName: "Carmen Rivas", time: "6d", timeDays: 6, isGroup: false, preview: "Vale nos vemos" },
+  { id: 15, name: "alejandro_sanz", displayName: "Alejandro Sanz", time: "1w", timeDays: 7, isGroup: false, preview: "Seen" },
+  { id: 16, name: "patricia_navarro", displayName: "Patricia Navarro", time: "1w", timeDays: 7, isGroup: false, preview: "De acuerdo" },
+  { id: 17, name: "raul_molina", displayName: "Raúl Molina", time: "1w", timeDays: 7, isGroup: false, preview: "Ok" },
+  { id: 18, name: "isabel_reyes", displayName: "Isabel Reyes", time: "2w", timeDays: 14, isGroup: false, preview: "Vale" },
+  { id: 19, name: "jose_manuel", displayName: "José Manuel", time: "2w", timeDays: 14, isGroup: false, preview: "Gracias" },
+  { id: 20, name: "cristina_delgado", displayName: "Cristina Delgado", time: "2w", timeDays: 14, isGroup: false, preview: "Seen" },
+  { id: 21, name: "andres_guerra", displayName: "Andrés Guerra", time: "3w", timeDays: 21, isGroup: false, preview: "Ok" },
+  { id: 22, name: "laura_ferrer", displayName: "Laura Ferrer", time: "3w", timeDays: 21, isGroup: false, preview: "Vale" },
+  { id: 23, name: "manuel_cano", displayName: "Manuel Cano", time: "1mo", timeDays: 30, isGroup: false, preview: "Seen" },
+  { id: 24, name: "rosa_mendez", displayName: "Rosa Méndez", time: "1mo", timeDays: 30, isGroup: false, preview: "Ok" },
+  { id: 25, name: "francisco_lozano", displayName: "Francisco Lozano", time: "2mo", timeDays: 60, isGroup: false, preview: "Seen" },
+];
+
+// === RENDER CONVERSATIONS ===
+function renderConversations() {
+  const list = document.getElementById('convList');
+  conversations.forEach(conv => {
+    const item = document.createElement('div');
+    item.className = 'conv-item';
+    item.setAttribute('role', 'listitem');
+    item.setAttribute('tabindex', '0');
+    item.dataset.convId = conv.id;
+    item.dataset.convName = conv.name;
+    item.dataset.convDisplayName = conv.displayName;
+    item.dataset.convTime = conv.time;
+    item.dataset.convTimeDays = conv.timeDays;
+    item.dataset.isGroup = conv.isGroup;
+    item.addEventListener('click', () => selectConversation(conv));
+
+    const initials = conv.displayName.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
+    item.innerHTML = `
+      <div class="conv-avatar">${initials}</div>
+      <div class="conv-info">
+        <div class="conv-name" dir="auto">${conv.displayName}${conv.isGroup ? '<span class="conv-group-badge">Group</span>' : ''}</div>
+        <div class="conv-preview" dir="auto">${conv.preview}</div>
+      </div>
+      <div class="conv-time">${conv.time}</div>
+    `;
+    list.appendChild(item);
+  });
+}
+
+// === SELECT CONVERSATION ===
+function selectConversation(conv) {
+  document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
+  const item = document.querySelector(`.conv-item[data-conv-id="${conv.id}"]`);
+  if (item) item.classList.add('active');
+
+  document.getElementById('chatHeaderName').textContent = conv.displayName;
+  const msgs = document.getElementById('chatMessages');
+  msgs.innerHTML = `<div class="chat-msg received">${conv.preview}</div>`;
+}
+
+// === MESSAGE INPUT - Simulate React/Lexical behavior ===
+const msgInput = document.getElementById('msgInput');
+const sendBtn = document.getElementById('sendBtn');
+
+// Track content state (like React does)
+function updateSendButton() {
+  const hasContent = msgInput.textContent.trim().length > 0;
+  if (hasContent) {
+    sendBtn.classList.add('active');
+  } else {
+    sendBtn.classList.remove('active');
+  }
+}
+
+// Listen for input events (like React/Lexical does)
+msgInput.addEventListener('input', updateSendButton);
+
+// Send button click handler
+sendBtn.addEventListener('click', () => {
+  const text = msgInput.textContent.trim();
+  if (!text) return;
+
+  // Add message to chat
+  const msgs = document.getElementById('chatMessages');
+  const msgEl = document.createElement('div');
+  msgEl.className = 'chat-msg sent';
+  msgEl.textContent = text;
+  msgs.appendChild(msgEl);
+  msgs.scrollTop = msgs.scrollHeight;
+
+  // Clear input (like React does)
+  msgInput.textContent = '';
+  updateSendButton();
+
+  console.log('[SIM] Message sent:', text.substring(0, 50) + '...');
+});
+
+// Enter key handler (like Instagram does)
+msgInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendBtn.click();
+  }
+});
+
+// Initialize
+renderConversations();
+console.log('[SIM] Instagram DM Simulator loaded with', conversations.length, 'conversations');
+</script>
+
+</body>
+</html>
