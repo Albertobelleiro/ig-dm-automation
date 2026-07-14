@@ -72,55 +72,97 @@ window.igDmDebug = function () {
   console.log('%c=== IG DM DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
   console.log('URL:', window.location.href);
 
-  const sc = findScrollContainer();
-  console.log('Scroll container:', sc ? {
-    left: Math.round(sc.getBoundingClientRect().left),
-    top: Math.round(sc.getBoundingClientRect().top),
-    width: Math.round(sc.getBoundingClientRect().width),
-    height: Math.round(sc.getBoundingClientRect().height),
-    scrollHeight: sc.scrollHeight,
-    childCount: sc.children.length,
-  } : 'NOT FOUND');
-
-  if (sc) {
-    console.log('Direct children:', sc.children.length);
-    for (let i = 0; i < Math.min(5, sc.children.length); i++) {
-      const child = sc.children[i];
-      const dirAuto = child.querySelector('[dir="auto"]');
-      console.log(`  child[${i}]:`, {
-        tag: child.tagName,
-        hasDirAuto: !!dirAuto,
-        dirAutoText: dirAuto?.textContent?.substring(0, 40),
-        textPreview: child.textContent?.substring(0, 80),
-        childCount: child.children.length,
-      });
-    }
-
-    const allDirAuto = sc.querySelectorAll('[dir="auto"]');
-    console.log('All dir="auto" inside scroll container:', allDirAuto.length);
-    const seen = new Set();
-    for (const el of allDirAuto) {
-      const text = el.textContent.trim();
-      if (text.length < 1 || text.length > 100) continue;
-      const rect = el.getBoundingClientRect();
-      if (rect.left > 500 || rect.top < 260) continue;
-      const key = Math.round(rect.top) + '-' + Math.round(rect.left);
-      if (!seen.has(key)) {
-        seen.add(key);
-        console.log(`  dir=auto: "${text.substring(0, 40)}" at top=${Math.round(rect.top)} left=${Math.round(rect.left)}`);
-      }
-    }
-  }
+  const threshold = getNotesThreshold();
+  console.log('Notes threshold:', threshold);
 
   const items = findConversationItems();
   console.log('Conversation items found:', items.length);
-  for (let i = 0; i < Math.min(10, items.length); i++) {
+  for (let i = 0; i < Math.min(15, items.length); i++) {
     const info = extractConvInfo(items[i]);
     console.log(`  ${i + 1}.`, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays, isGroup: info.isGroup });
   }
 
   console.log('%c=== END DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
 };
+
+// === GET NOTES THRESHOLD ===
+// Find the "Mensajes"/"Messages" header and use its bottom as the threshold
+function getNotesThreshold() {
+  const headers = document.querySelectorAll('h1, h2, h3, [dir="auto"]');
+  for (const h of headers) {
+    const text = h.textContent.trim().toLowerCase();
+    if (text === 'mensajes' || text === 'messages') {
+      const rect = h.getBoundingClientRect();
+      return rect.bottom + 5;
+    }
+  }
+  return 260;
+}
+
+// === CHECK IF ELEMENT IS A NOTE BUBBLE ===
+function isNoteBubble(el) {
+  const threshold = getNotesThreshold();
+  const rect = el.getBoundingClientRect();
+  if (rect.top < threshold) return true;
+
+  let parent = el.parentElement;
+  while (parent && parent !== document.body) {
+    const style = window.getComputedStyle(parent);
+    if ((style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+        parent.scrollWidth > parent.clientWidth &&
+        parent.clientHeight < 120) {
+      return true;
+    }
+    parent = parent.parentElement;
+  }
+
+  return false;
+}
+
+// === CHECK IF TEXT IS A NAME (not preview, not timestamp, not header) ===
+function isNameText(text) {
+  if (!text || text.length < 1 || text.length > 50) return false;
+
+  // Skip timestamps
+  if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) return false;
+
+  // Skip status/active indicators
+  if (/^(now|active|ahora|activo|en línea|en linea)/i.test(text)) return false;
+
+  // Skip headers
+  if (/^(mensajes|messages|tu nota|your note)/i.test(text)) return false;
+
+  // Skip previews (message previews in the conversation list)
+  if (/^(tú|you)\s*:/i.test(text)) return false;
+  if (/ha enviado/i.test(text)) return false;
+  if (/le ha gustado/i.test(text)) return false;
+  if (/new messages/i.test(text)) return false;
+  if (/ha reaccionado/i.test(text)) return false;
+  if (/archivo adjunto/i.test(text)) return false;
+  if (/enviado un archivo/i.test(text)) return false;
+  if (/^seen/i.test(text)) return false;
+  if (/^visto/i.test(text)) return false;
+
+  return true;
+}
+
+// === CHECK IF ELEMENT CONTAINS A TIMESTAMP ===
+function checkHasTimestamp(el) {
+  // Check for <time> element
+  if (el.querySelector('time')) return true;
+
+  // Check for elements with timestamp-like text
+  const els = el.querySelectorAll('span, div, time, abbr, [dir="auto"]');
+  for (const e of els) {
+    const text = e.textContent.trim();
+    if (text.length === 0 || text.length > 30) continue;
+    if (e.children.length > 1) continue;
+    if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) return true;
+    if (/^(now|active|ahora|activo)/i.test(text)) return true;
+  }
+
+  return false;
+}
 
 // === FIND SCROLL CONTAINER ===
 function findScrollContainer() {
@@ -146,144 +188,59 @@ function findScrollContainer() {
     }
   }
 
-  const containers = document.querySelectorAll('[role="list"], [role="navigation"], [role="listbox"]');
-  for (const container of containers) {
-    const rect = container.getBoundingClientRect();
-    if (rect.left < 500 && rect.height > 200) return container;
-  }
-
   return null;
-}
-
-// === CHECK IF ELEMENT IS A NOTE BUBBLE ===
-function isNoteBubble(el) {
-  const rect = el.getBoundingClientRect();
-  if (rect.top < 260) return true;
-
-  let parent = el.parentElement;
-  while (parent && parent !== document.body) {
-    const style = window.getComputedStyle(parent);
-    if ((style.overflowX === 'auto' || style.overflowX === 'scroll') &&
-        parent.scrollWidth > parent.clientWidth &&
-        parent.clientHeight < 120) {
-      return true;
-    }
-    parent = parent.parentElement;
-  }
-
-  return false;
 }
 
 // === FIND CONVERSATION ITEMS ===
 function findConversationItems() {
-  const scrollContainer = findScrollContainer();
-  if (!scrollContainer) {
-    log('No se encontró contenedor de scroll. Ejecuta igDmDebug() para diagnosticar.', 'error');
+  const threshold = getNotesThreshold();
+  const allDirAuto = document.querySelectorAll('[dir="auto"]');
+  const nameEls = [];
+
+  // Step 1: Find all dir="auto" elements that look like names
+  for (const el of allDirAuto) {
+    const text = el.textContent.trim();
+    if (!isNameText(text)) continue;
+
+    const rect = el.getBoundingClientRect();
+    if (rect.left > 500 || rect.left < 50) continue;
+    if (rect.top < threshold) continue;
+
+    nameEls.push(el);
+  }
+
+  log(`Nombres candidatos: ${nameEls.length}`, 'info');
+
+  if (nameEls.length === 0) {
+    log('No se encontraron nombres. Ejecuta igDmDebug() para diagnosticar.', 'error');
     return [];
   }
 
+  // Step 2: For each name, walk up until we find a parent that ALSO contains a timestamp
   const items = [];
   const seen = new Set();
 
-  // Approach 1: Direct children of scroll container that have dir="auto" (names)
-  for (const child of scrollContainer.children) {
-    const nameEl = child.querySelector('[dir="auto"]');
-    if (!nameEl) continue;
-    if (isNoteBubble(child)) continue;
-    const rect = child.getBoundingClientRect();
-    if (rect.left > 500 || rect.top < 260) continue;
-    if (!seen.has(child)) {
-      seen.add(child);
-      items.push(child);
-    }
-  }
+  for (const nameEl of nameEls) {
+    let parent = nameEl.parentElement;
+    let attempts = 0;
 
-  // Approach 2: If no direct children worked, try grandchildren
-  if (items.length === 0) {
-    log('Approach 1 (direct children) falló. Probando grandchildren...', 'warn');
-    for (const child of scrollContainer.children) {
-      for (const grandchild of child.children) {
-        const nameEl = grandchild.querySelector('[dir="auto"]');
-        if (!nameEl) continue;
-        if (isNoteBubble(grandchild)) continue;
-        const rect = grandchild.getBoundingClientRect();
-        if (rect.left > 500 || rect.top < 260) continue;
-        if (!seen.has(grandchild)) {
-          seen.add(grandchild);
-          items.push(grandchild);
-        }
-      }
-    }
-  }
-
-  // Approach 3: If still nothing, find all dir="auto" in scroll container and walk up
-  if (items.length === 0) {
-    log('Approach 2 (grandchildren) falló. Probando walk-up from dir="auto"...', 'warn');
-    const nameEls = scrollContainer.querySelectorAll('[dir="auto"]');
-    for (const nameEl of nameEls) {
-      const text = nameEl.textContent.trim();
-      if (text.length < 1 || text.length > 100) continue;
-      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
-      if (/^(now|active|ahora|activo|seen|visto)/i.test(text)) continue;
-
-      const rect = nameEl.getBoundingClientRect();
-      if (rect.left > 500 || rect.top < 260) continue;
-
-      let parent = nameEl.parentElement;
-      let attempts = 0;
-      while (parent && parent !== scrollContainer && parent !== document.body && attempts < 10) {
-        if (parent.parentElement === scrollContainer || 
-            (parent.parentElement && parent.parentElement.parentElement === scrollContainer)) {
-          if (!isNoteBubble(parent)) {
-            const parentRect = parent.getBoundingClientRect();
-            if (parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
-              if (!seen.has(parent)) {
-                seen.add(parent);
-                items.push(parent);
-              }
-            }
-          }
-          break;
-        }
-        parent = parent.parentElement;
-        attempts++;
-      }
-    }
-  }
-
-  // Approach 4: Last resort — find dir="auto" in the whole left panel (not just scroll container)
-  if (items.length === 0) {
-    log('Approach 3 falló. Probando broad scan del panel izquierdo...', 'warn');
-    const allDirAuto = document.querySelectorAll('[dir="auto"]');
-    for (const nameEl of allDirAuto) {
-      const text = nameEl.textContent.trim();
-      if (text.length < 1 || text.length > 100) continue;
-      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
-      if (/^(now|active|ahora|activo|seen|visto|tu nota)/i.test(text)) continue;
-
-      const rect = nameEl.getBoundingClientRect();
-      if (rect.left > 500 || rect.top < 260) continue;
-
-      let parent = nameEl.parentElement;
-      let attempts = 0;
-      while (parent && parent !== document.body && attempts < 8) {
-        const parentText = parent.textContent || '';
+    while (parent && parent !== document.body && attempts < 15) {
+      if (checkHasTimestamp(parent)) {
         const parentRect = parent.getBoundingClientRect();
-        if (parentText.length > 5 && parentText.length < 300 &&
-            parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
-          if (!isNoteBubble(parent) && !seen.has(parent)) {
+        if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
+          if (!seen.has(parent) && !isNoteBubble(parent)) {
             seen.add(parent);
             items.push(parent);
           }
           break;
         }
-        parent = parent.parentElement;
-        attempts++;
       }
+      parent = parent.parentElement;
+      attempts++;
     }
   }
 
-  // Deduplicate
+  // Deduplicate: remove items that are children of other items
   const filtered = items.filter((item) => {
     return !items.some((other) => other !== item && other.contains(item));
   });
@@ -308,13 +265,11 @@ function extractTimestamp(item) {
     }
   }
 
-  // Method 2: Look for spans/elements with timestamp-like text
-  const allEls = item.querySelectorAll('span, div, time, abbr');
+  // Method 2: Look for elements with timestamp-like text
+  const allEls = item.querySelectorAll('span, div, time, abbr, [dir="auto"]');
   for (const el of allEls) {
     const text = el.textContent.trim();
-    if (text.length === 0 || text.length > 20) continue;
-
-    // Skip if this element has children (it's a container, not a leaf timestamp)
+    if (text.length === 0 || text.length > 30) continue;
     if (el.children.length > 1) continue;
 
     const days = parseTimestampToDays(text);
@@ -331,12 +286,23 @@ function parseTimestampToDays(timeText) {
   if (!timeText) return 999;
   const t = timeText.trim().toLowerCase();
 
-  // Now / Active (English + Spanish)
-  if (t === 'now' || t === 'active now' || t === 'active' ||
-      t === 'ahora' || t === 'activo ahora' || t === 'activo' ||
-      t === 'en línea' || t === 'en linea') return 0;
+  // Active/Activo status = recent (0 days)
+  if (/^(activo|active|now|ahora)/i.test(t)) return 0;
+  if (/^(en línea|en linea)/i.test(t)) return 0;
 
-  // Months: "mo" (EN), "mes" / "meses" (ES) — check before minutes!
+  // "Activo(a) hace X min/h/d/sem" or "hace X min/h/d/sem" pattern
+  let activeAgo = t.match(/hace\s*(\d+)\s*(m|min|h|d|w|sem|mes|mo)/);
+  if (activeAgo) {
+    const num = parseInt(activeAgo[1]);
+    const unit = activeAgo[2];
+    if (/^m/.test(unit)) return 0;
+    if (/^h/.test(unit)) return 0;
+    if (/^d/.test(unit)) return num;
+    if (/^(w|sem)/.test(unit)) return num * 7;
+    if (/^(mo|mes)/.test(unit)) return num * 30;
+  }
+
+  // Months: "mo" (EN), "mes" / "meses" (ES)
   let mo = t.match(/^(\d+)\s*(mo|mes|meses)/);
   if (mo) return parseInt(mo[1]) * 30;
 
@@ -344,7 +310,7 @@ function parseTimestampToDays(timeText) {
   let w = t.match(/^(\d+)\s*(w|sem|semana|semanas)/);
   if (w) return parseInt(w[1]) * 7;
 
-  // Days: "d" (EN/ES), "día" / "días" (ES)
+  // Days: "d" (EN/ES)
   let d = t.match(/^(\d+)\s*d/);
   if (d) return parseInt(d[1]);
 
@@ -352,7 +318,7 @@ function parseTimestampToDays(timeText) {
   let h = t.match(/^(\d+)\s*h/);
   if (h) return 0;
 
-  // Minutes: "m" (EN), "min" / "minuto" / "minutos" (ES) — check after months!
+  // Minutes: "m" (EN), "min" / "minuto" / "minutos" (ES)
   let m = t.match(/^(\d+)\s*(min|minuto|minutos|m)/);
   if (m) return 0;
 
@@ -367,22 +333,21 @@ function parseTimestampToDays(timeText) {
 function extractConvInfo(item) {
   const text = item.textContent || '';
 
-  // Extract name from first dir="auto" element that isn't a timestamp/preview
+  // Find the name: first dir="auto" that is a name (not preview, not timestamp)
   const nameEls = item.querySelectorAll('[dir="auto"]');
   let name = '';
   for (const el of nameEls) {
     const elText = el.textContent.trim();
-    if (elText.length < 1 || elText.length > 100) continue;
-    if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(elText)) continue;
-    if (/^(now|active|ahora|activo|seen|visto)/i.test(elText)) continue;
-    name = elText;
-    break;
+    if (isNameText(elText)) {
+      name = elText;
+      break;
+    }
   }
 
-  // Extract timestamp using new function
+  // Extract timestamp
   const ts = extractTimestamp(item);
 
-  // Group detection — only text-based, no DOM structure checks (those cause false positives)
+  // Group detection
   const isGroup = /group|grupo|\d+\s*(people|personas|miembros|members)/i.test(text);
 
   return {

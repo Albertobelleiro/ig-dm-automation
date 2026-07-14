@@ -71,24 +71,79 @@ function waitForElement(selector, timeout = 8000) {
 window.igDmDebug = function () {
   console.log('%c=== IG DM DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
   console.log('URL:', window.location.href);
-  const sc = findScrollContainer();
-  console.log('Scroll container:', sc ? { left: Math.round(sc.getBoundingClientRect().left), top: Math.round(sc.getBoundingClientRect().top), scrollHeight: sc.scrollHeight, childCount: sc.children.length } : 'NOT FOUND');
-  if (sc) {
-    console.log('Direct children:', sc.children.length);
-    for (let i = 0; i < Math.min(5, sc.children.length); i++) {
-      const child = sc.children[i];
-      const dirAuto = child.querySelector('[dir="auto"]');
-      console.log(`  child[${i}]:`, { tag: child.tagName, hasDirAuto: !!dirAuto, dirAutoText: dirAuto?.textContent?.substring(0, 40), textPreview: child.textContent?.substring(0, 80), childCount: child.children.length });
-    }
-  }
+  const threshold = getNotesThreshold();
+  console.log('Notes threshold:', threshold);
   const items = findConversationItems();
   console.log('Conversation items found:', items.length);
-  for (let i = 0; i < Math.min(10, items.length); i++) {
+  for (let i = 0; i < Math.min(15, items.length); i++) {
     const info = extractConvInfo(items[i]);
     console.log(`  ${i + 1}.`, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays, isGroup: info.isGroup });
   }
   console.log('%c=== END DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
 };
+
+// === GET NOTES THRESHOLD ===
+function getNotesThreshold() {
+  const headers = document.querySelectorAll('h1, h2, h3, [dir="auto"]');
+  for (const h of headers) {
+    const text = h.textContent.trim().toLowerCase();
+    if (text === 'mensajes' || text === 'messages') {
+      const rect = h.getBoundingClientRect();
+      return rect.bottom + 5;
+    }
+  }
+  return 260;
+}
+
+// === CHECK IF ELEMENT IS A NOTE BUBBLE ===
+function isNoteBubble(el) {
+  const threshold = getNotesThreshold();
+  const rect = el.getBoundingClientRect();
+  if (rect.top < threshold) return true;
+  let parent = el.parentElement;
+  while (parent && parent !== document.body) {
+    const style = window.getComputedStyle(parent);
+    if ((style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+        parent.scrollWidth > parent.clientWidth &&
+        parent.clientHeight < 120) {
+      return true;
+    }
+    parent = parent.parentElement;
+  }
+  return false;
+}
+
+// === CHECK IF TEXT IS A NAME ===
+function isNameText(text) {
+  if (!text || text.length < 1 || text.length > 50) return false;
+  if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) return false;
+  if (/^(now|active|ahora|activo|en línea|en linea)/i.test(text)) return false;
+  if (/^(mensajes|messages|tu nota|your note)/i.test(text)) return false;
+  if (/^(tú|you)\s*:/i.test(text)) return false;
+  if (/ha enviado/i.test(text)) return false;
+  if (/le ha gustado/i.test(text)) return false;
+  if (/new messages/i.test(text)) return false;
+  if (/ha reaccionado/i.test(text)) return false;
+  if (/archivo adjunto/i.test(text)) return false;
+  if (/enviado un archivo/i.test(text)) return false;
+  if (/^seen/i.test(text)) return false;
+  if (/^visto/i.test(text)) return false;
+  return true;
+}
+
+// === CHECK IF ELEMENT CONTAINS A TIMESTAMP ===
+function checkHasTimestamp(el) {
+  if (el.querySelector('time')) return true;
+  const els = el.querySelectorAll('span, div, time, abbr, [dir="auto"]');
+  for (const e of els) {
+    const text = e.textContent.trim();
+    if (text.length === 0 || text.length > 30) continue;
+    if (e.children.length > 1) continue;
+    if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) return true;
+    if (/^(now|active|ahora|activo)/i.test(text)) return true;
+  }
+  return false;
+}
 
 // === FIND SCROLL CONTAINER ===
 function findScrollContainer() {
@@ -111,121 +166,50 @@ function findScrollContainer() {
       }
     }
   }
-  const containers = document.querySelectorAll('[role="list"], [role="navigation"], [role="listbox"]');
-  for (const container of containers) {
-    const rect = container.getBoundingClientRect();
-    if (rect.left < 500 && rect.height > 200) return container;
-  }
   return null;
-}
-
-// === CHECK IF ELEMENT IS A NOTE BUBBLE ===
-function isNoteBubble(el) {
-  const rect = el.getBoundingClientRect();
-  if (rect.top < 260) return true;
-  let parent = el.parentElement;
-  while (parent && parent !== document.body) {
-    const style = window.getComputedStyle(parent);
-    if ((style.overflowX === 'auto' || style.overflowX === 'scroll') &&
-        parent.scrollWidth > parent.clientWidth &&
-        parent.clientHeight < 120) {
-      return true;
-    }
-    parent = parent.parentElement;
-  }
-  return false;
 }
 
 // === FIND CONVERSATION ITEMS ===
 function findConversationItems() {
-  const scrollContainer = findScrollContainer();
-  if (!scrollContainer) {
-    log('No se encontró contenedor de scroll. Ejecuta igDmDebug() para diagnosticar.', 'error');
+  const threshold = getNotesThreshold();
+  const allDirAuto = document.querySelectorAll('[dir="auto"]');
+  const nameEls = [];
+
+  for (const el of allDirAuto) {
+    const text = el.textContent.trim();
+    if (!isNameText(text)) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.left > 500 || rect.left < 50) continue;
+    if (rect.top < threshold) continue;
+    nameEls.push(el);
+  }
+
+  log(`Nombres candidatos: ${nameEls.length}`, 'info');
+
+  if (nameEls.length === 0) {
+    log('No se encontraron nombres. Ejecuta igDmDebug() para diagnosticar.', 'error');
     return [];
   }
 
   const items = [];
   const seen = new Set();
 
-  // Approach 1: Direct children of scroll container that have dir="auto"
-  for (const child of scrollContainer.children) {
-    const nameEl = child.querySelector('[dir="auto"]');
-    if (!nameEl) continue;
-    if (isNoteBubble(child)) continue;
-    const rect = child.getBoundingClientRect();
-    if (rect.left > 500 || rect.top < 260) continue;
-    if (!seen.has(child)) { seen.add(child); items.push(child); }
-  }
-
-  // Approach 2: Grandchildren
-  if (items.length === 0) {
-    log('Approach 1 falló. Probando grandchildren...', 'warn');
-    for (const child of scrollContainer.children) {
-      for (const grandchild of child.children) {
-        const nameEl = grandchild.querySelector('[dir="auto"]');
-        if (!nameEl) continue;
-        if (isNoteBubble(grandchild)) continue;
-        const rect = grandchild.getBoundingClientRect();
-        if (rect.left > 500 || rect.top < 260) continue;
-        if (!seen.has(grandchild)) { seen.add(grandchild); items.push(grandchild); }
-      }
-    }
-  }
-
-  // Approach 3: Walk up from dir="auto" inside scroll container
-  if (items.length === 0) {
-    log('Approach 2 falló. Probando walk-up from dir="auto"...', 'warn');
-    const nameEls = scrollContainer.querySelectorAll('[dir="auto"]');
-    for (const nameEl of nameEls) {
-      const text = nameEl.textContent.trim();
-      if (text.length < 1 || text.length > 100) continue;
-      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
-      if (/^(now|active|ahora|activo|seen|visto)/i.test(text)) continue;
-      const rect = nameEl.getBoundingClientRect();
-      if (rect.left > 500 || rect.top < 260) continue;
-      let parent = nameEl.parentElement;
-      let attempts = 0;
-      while (parent && parent !== scrollContainer && parent !== document.body && attempts < 10) {
-        if (parent.parentElement === scrollContainer ||
-            (parent.parentElement && parent.parentElement.parentElement === scrollContainer)) {
-          if (!isNoteBubble(parent)) {
-            const parentRect = parent.getBoundingClientRect();
-            if (parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
-              if (!seen.has(parent)) { seen.add(parent); items.push(parent); }
-            }
+  for (const nameEl of nameEls) {
+    let parent = nameEl.parentElement;
+    let attempts = 0;
+    while (parent && parent !== document.body && attempts < 15) {
+      if (checkHasTimestamp(parent)) {
+        const parentRect = parent.getBoundingClientRect();
+        if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
+          if (!seen.has(parent) && !isNoteBubble(parent)) {
+            seen.add(parent);
+            items.push(parent);
           }
           break;
         }
-        parent = parent.parentElement;
-        attempts++;
       }
-    }
-  }
-
-  // Approach 4: Broad scan of left panel
-  if (items.length === 0) {
-    log('Approach 3 falló. Probando broad scan del panel izquierdo...', 'warn');
-    const allDirAuto = document.querySelectorAll('[dir="auto"]');
-    for (const nameEl of allDirAuto) {
-      const text = nameEl.textContent.trim();
-      if (text.length < 1 || text.length > 100) continue;
-      if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(text)) continue;
-      if (/^(now|active|ahora|activo|seen|visto|tu nota)/i.test(text)) continue;
-      const rect = nameEl.getBoundingClientRect();
-      if (rect.left > 500 || rect.top < 260) continue;
-      let parent = nameEl.parentElement;
-      let attempts = 0;
-      while (parent && parent !== document.body && attempts < 8) {
-        const parentText = parent.textContent || '';
-        const parentRect = parent.getBoundingClientRect();
-        if (parentText.length > 5 && parentText.length < 300 &&
-            parentRect.left < 500 && parentRect.top > 260 && parentRect.height < 200) {
-          if (!isNoteBubble(parent) && !seen.has(parent)) { seen.add(parent); items.push(parent); }
-          break;
-        }
-        parent = parent.parentElement;
-        attempts++;
-      }
+      parent = parent.parentElement;
+      attempts++;
     }
   }
 
@@ -252,10 +236,10 @@ function extractTimestamp(item) {
     }
   }
 
-  const allEls = item.querySelectorAll('span, div, time, abbr');
+  const allEls = item.querySelectorAll('span, div, time, abbr, [dir="auto"]');
   for (const el of allEls) {
     const text = el.textContent.trim();
-    if (text.length === 0 || text.length > 20) continue;
+    if (text.length === 0 || text.length > 30) continue;
     if (el.children.length > 1) continue;
     const days = parseTimestampToDays(text);
     if (days < 999) return { text, days };
@@ -269,9 +253,19 @@ function parseTimestampToDays(timeText) {
   if (!timeText) return 999;
   const t = timeText.trim().toLowerCase();
 
-  if (t === 'now' || t === 'active now' || t === 'active' ||
-      t === 'ahora' || t === 'activo ahora' || t === 'activo' ||
-      t === 'en línea' || t === 'en linea') return 0;
+  if (/^(activo|active|now|ahora)/i.test(t)) return 0;
+  if (/^(en línea|en linea)/i.test(t)) return 0;
+
+  let activeAgo = t.match(/hace\s*(\d+)\s*(m|min|h|d|w|sem|mes|mo)/);
+  if (activeAgo) {
+    const num = parseInt(activeAgo[1]);
+    const unit = activeAgo[2];
+    if (/^m/.test(unit)) return 0;
+    if (/^h/.test(unit)) return 0;
+    if (/^d/.test(unit)) return num;
+    if (/^(w|sem)/.test(unit)) return num * 7;
+    if (/^(mo|mes)/.test(unit)) return num * 30;
+  }
 
   let mo = t.match(/^(\d+)\s*(mo|mes|meses)/);
   if (mo) return parseInt(mo[1]) * 30;
@@ -302,11 +296,10 @@ function extractConvInfo(item) {
   let name = '';
   for (const el of nameEls) {
     const elText = el.textContent.trim();
-    if (elText.length < 1 || elText.length > 100) continue;
-    if (/^\d+\s*(m|min|h|d|w|sem|mes|mo|y|a)/i.test(elText)) continue;
-    if (/^(now|active|ahora|activo|seen|visto)/i.test(elText)) continue;
-    name = elText;
-    break;
+    if (isNameText(elText)) {
+      name = elText;
+      break;
+    }
   }
 
   const ts = extractTimestamp(item);
