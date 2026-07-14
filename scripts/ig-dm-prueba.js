@@ -101,10 +101,110 @@ function parseTimestampToDays(timeText) {
   return 999;
 }
 
+// === DEBUG: Inspect Instagram DOM ===
+window.igDmDebug = function () {
+  console.log('%c=== IG DM DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
+
+  // 1. Check URL
+  console.log('URL:', window.location.href);
+
+  // 2. Find all elements with role attributes
+  const roleEls = document.querySelectorAll('[role]');
+  const roles = {};
+  roleEls.forEach(el => {
+    const r = el.getAttribute('role');
+    roles[r] = (roles[r] || 0) + 1;
+  });
+  console.log('Roles found:', roles);
+
+  // 3. Find scrollable divs
+  const allDivs = document.querySelectorAll('div');
+  const scrollables = [];
+  for (const div of allDivs) {
+    const style = window.getComputedStyle(div);
+    if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+      if (div.scrollHeight > div.clientHeight) {
+        const rect = div.getBoundingClientRect();
+        scrollables.push({
+          tag: div.tagName,
+          role: div.getAttribute('role'),
+          class: div.className.substring(0, 60),
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+          scrollHeight: div.scrollHeight,
+          clientHeight: div.clientHeight,
+        });
+      }
+    }
+  }
+  console.log('Scrollable containers:', scrollables.length);
+  scrollables.forEach((s, i) => console.log(`  ${i + 1}.`, s));
+
+  // 4. Find elements with timestamp-like text
+  const timestampEls = [];
+  for (const div of allDivs) {
+    const text = div.textContent.trim();
+    if (text.length > 0 && text.length < 20) {
+      if (/^\d+\s*[mhdw]/i.test(text) || /^now$/i.test(text) || /^active/i.test(text)) {
+        const rect = div.getBoundingClientRect();
+        timestampEls.push({
+          text: text,
+          tag: div.tagName,
+          role: div.getAttribute('role'),
+          top: Math.round(rect.top),
+          left: Math.round(rect.left),
+          parentRole: div.parentElement?.getAttribute('role'),
+          parentClass: div.parentElement?.className?.substring(0, 40),
+        });
+      }
+    }
+  }
+  console.log('Timestamp elements found:', timestampEls.length);
+  timestampEls.slice(0, 15).forEach((t, i) => console.log(`  ${i + 1}.`, t));
+
+  // 5. Find contenteditable inputs
+  const inputs = document.querySelectorAll('[contenteditable="true"]');
+  console.log('Contenteditable inputs:', inputs.length);
+  inputs.forEach((el, i) => {
+    const rect = el.getBoundingClientRect();
+    console.log(`  ${i + 1}.`, {
+      role: el.getAttribute('role'),
+      ariaLabel: el.getAttribute('aria-label'),
+      top: Math.round(rect.top),
+      left: Math.round(rect.left),
+    });
+  });
+
+  // 6. Find elements with dir="auto" (Instagram name containers)
+  const dirAutoEls = document.querySelectorAll('[dir="auto"]');
+  console.log('Elements with dir="auto":', dirAutoEls.length);
+  const nameSamples = [];
+  dirAutoEls.forEach(el => {
+    const text = el.textContent.trim();
+    if (text.length > 1 && text.length < 50) {
+      const rect = el.getBoundingClientRect();
+      if (rect.left < 400 && rect.top > 100) {
+        nameSamples.push({
+          text: text,
+          tag: el.tagName,
+          top: Math.round(rect.top),
+          left: Math.round(rect.left),
+        });
+      }
+    }
+  });
+  console.log('Name-like elements (left side, below notes):', nameSamples.length);
+  nameSamples.slice(0, 10).forEach((n, i) => console.log(`  ${i + 1}.`, n));
+
+  console.log('%c=== END DEBUG ===', 'color:#fff;font-weight:bold;font-size:14px');
+  console.log('Copia este output y pásamelo para arreglar los selectores.');
+};
+
 // === CHECK IF ELEMENT IS A NOTE BUBBLE (not a conversation) ===
 function isNoteBubble(el) {
   const rect = el.getBoundingClientRect();
-
   if (rect.top < 120) return true;
 
   let parent = el.parentElement;
@@ -115,17 +215,10 @@ function isNoteBubble(el) {
         parent.clientHeight < 120) {
       return true;
     }
-    const parentRect = parent.getBoundingClientRect();
-    if (parentRect.top < 100 && parentRect.height < 120 && parentRect.width > 300) {
-      if (parent.scrollWidth > parent.clientWidth) {
-        return true;
-      }
-    }
     parent = parent.parentElement;
   }
 
   if (rect.height < 60 && rect.width < 80) return true;
-
   return false;
 }
 
@@ -134,50 +227,86 @@ function findConversationItems() {
   const allDivs = document.querySelectorAll('div');
   const items = [];
 
+  // Strategy 1: Look for elements with role="listitem" or role="button" that have timestamps
   for (const div of allDivs) {
     const role = div.getAttribute('role');
-
-    if (role === 'listitem' || role === 'button') {
+    if (role === 'listitem' || role === 'button' || role === 'link') {
       const text = div.textContent || '';
       if (text.length > 2 && text.length < 500) {
-        const hasTimestamp = /\d+\s*[mhdw]/i.test(text) || /now/i.test(text);
+        const hasTimestamp = /\d+\s*[mhdw]/i.test(text) || /now/i.test(text) || /active/i.test(text);
         if (hasTimestamp) {
           if (isNoteBubble(div)) continue;
           const rect = div.getBoundingClientRect();
           if (rect.top < 120) continue;
+          if (rect.left > 500) continue; // Must be in left panel
           items.push(div);
         }
       }
     }
   }
 
+  // Strategy 2: Look for elements with dir="auto" (names) and find their parent containers
   if (items.length === 0) {
-    const listContainers = document.querySelectorAll('[role="list"], [role="listbox"], [role="navigation"]');
-    for (const container of listContainers) {
-      const containerRect = container.getBoundingClientRect();
-      if (containerRect.top < 120) continue;
+    log('Strategy 1 falló. Probando strategy 2 (dir="auto")...', 'warn');
+    const nameEls = document.querySelectorAll('[dir="auto"]');
+    for (const nameEl of nameEls) {
+      const text = nameEl.textContent.trim();
+      if (text.length < 1 || text.length > 100) continue;
+      // Skip timestamps
+      if (/^\d+\s*[mhdw]/i.test(text) || /^now$/i.test(text) || /^active/i.test(text)) continue;
+      // Skip message previews
+      if (/^(seen|visto)/i.test(text)) continue;
 
-      const children = container.querySelectorAll('div');
-      for (const child of children) {
-        const text = child.textContent || '';
-        if (text.length > 2 && text.length < 500) {
-          const hasTimestamp = /\d+\s*[mhdw]/i.test(text) || /now/i.test(text);
-          if (hasTimestamp && child.children.length >= 2) {
-            if (isNoteBubble(child)) continue;
-            items.push(child);
-            break;
+      const rect = nameEl.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 120) continue;
+
+      // Walk up to find the clickable parent container
+      let parent = nameEl.parentElement;
+      let attempts = 0;
+      while (parent && attempts < 8) {
+        const parentText = parent.textContent || '';
+        const parentRect = parent.getBoundingClientRect();
+        // Parent should contain a timestamp and be in the left panel
+        if (parentText.length > 5 && parentText.length < 500 &&
+            /\d+\s*[mhdw]/i.test(parentText) &&
+            parentRect.left < 500 && parentRect.top > 120) {
+          if (!isNoteBubble(parent)) {
+            items.push(parent);
           }
+          break;
         }
+        parent = parent.parentElement;
+        attempts++;
       }
     }
   }
 
+  // Strategy 3: Look for any div in the left panel with a timestamp and multiple children
+  if (items.length === 0) {
+    log('Strategy 2 falló. Probando strategy 3 (broad scan)...', 'warn');
+    for (const div of allDivs) {
+      const text = div.textContent || '';
+      if (text.length < 10 || text.length > 500) continue;
+      const rect = div.getBoundingClientRect();
+      if (rect.left > 500 || rect.top < 120) continue;
+      if (div.children.length < 2) continue;
+
+      const hasTimestamp = /\d+\s*[mhdw]/i.test(text) || /now/i.test(text);
+      if (hasTimestamp && !isNoteBubble(div)) {
+        items.push(div);
+      }
+    }
+  }
+
+  // Deduplicate
   const filtered = items.filter((item) => {
     return !items.some((other) => other !== item && other.contains(item));
   });
 
+  // Final filter
   const cleanItems = filtered.filter((item) => !isNoteBubble(item));
 
+  log(`findConversationItems: ${cleanItems.length} items encontrados`, 'info');
   return cleanItems;
 }
 
@@ -221,19 +350,17 @@ function extractConvInfo(item) {
 
 // === SCROLL CONVERSATION LIST ===
 async function scrollConversationList() {
-  // Find the scrollable conversation list container
-  const scrollables = document.querySelectorAll('div');
+  const allDivs = document.querySelectorAll('div');
   let scrollContainer = null;
 
-  for (const div of scrollables) {
+  // Strategy 1: Find scrollable div in the left panel (overflowY auto/scroll)
+  for (const div of allDivs) {
     const style = window.getComputedStyle(div);
     if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
-      // Check if this container has conversation items
       const text = div.textContent || '';
       if (text.length > 100 && div.scrollHeight > div.clientHeight) {
-        // Prefer the leftmost scrollable container (conversation list)
         const rect = div.getBoundingClientRect();
-        if (rect.left < 400) {
+        if (rect.left < 500) {
           scrollContainer = div;
           break;
         }
@@ -241,10 +368,59 @@ async function scrollConversationList() {
     }
   }
 
+  // Strategy 2: Find any scrollable div that contains conversation-like content
   if (!scrollContainer) {
-    log('No se encontró contenedor de scroll para la lista de conversaciones', 'warn');
+    log('Strategy 1 scroll falló. Probando strategy 2...', 'warn');
+    for (const div of allDivs) {
+      const style = window.getComputedStyle(div);
+      if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+        if (div.scrollHeight > div.clientHeight && div.clientHeight > 200) {
+          const rect = div.getBoundingClientRect();
+          // Must be in the left half of the screen and have decent height
+          if (rect.left < window.innerWidth / 2 && rect.height > 200) {
+            scrollContainer = div;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  // Strategy 3: Look for div with role="list" or role="navigation" that's scrollable
+  if (!scrollContainer) {
+    log('Strategy 2 scroll falló. Probando strategy 3...', 'warn');
+    const containers = document.querySelectorAll('[role="list"], [role="navigation"], [role="listbox"]');
+    for (const container of containers) {
+      const rect = container.getBoundingClientRect();
+      if (rect.left < 500 && rect.height > 200) {
+        // Try to scroll it
+        container.scrollTop = container.scrollHeight;
+        await sleep(100);
+        if (container.scrollTop > 0) {
+          scrollContainer = container;
+          break;
+        }
+        // Also check if any child is scrollable
+        for (const child of container.querySelectorAll('div')) {
+          const childStyle = window.getComputedStyle(child);
+          if (childStyle.overflowY === 'auto' || childStyle.overflowY === 'scroll') {
+            if (child.scrollHeight > child.clientHeight) {
+              scrollContainer = child;
+              break;
+            }
+          }
+        }
+        if (scrollContainer) break;
+      }
+    }
+  }
+
+  if (!scrollContainer) {
+    log('No se encontró contenedor de scroll. Ejecuta igDmDebug() para diagnosticar.', 'error');
     return;
   }
+
+  log(`Contenedor de scroll encontrado. Iniciando scroll...`, 'info');
 
   let lastHeight = 0;
   const maxScrolls = IG_DM_CONFIG.maxScrolls || 10;
