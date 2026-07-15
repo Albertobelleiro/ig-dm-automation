@@ -523,55 +523,58 @@ async function writeMessage(input, text) {
     input.focus();
     await sleep(200);
 
-    // Clear existing content properly (Lexical needs selectAll + delete)
     try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
     input.textContent = '';
+    input.innerHTML = '';
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
     await sleep(100);
 
-    if (input.textContent.trim().length > 0) {
-      input.innerHTML = '';
-      await sleep(100);
-    }
-
-    // Method 1: execCommand insertText
+    // Method 1: Insert line by line with insertParagraph for line breaks
     try {
-      const success = document.execCommand('insertText', false, text);
-      if (success && input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) return true;
+      const lines = text.split('\n');
+      for (let li = 0; li < lines.length; li++) {
+        if (lines[li].length > 0) {
+          document.execCommand('insertText', false, lines[li]);
+        }
+        if (li < lines.length - 1) {
+          document.execCommand('insertParagraph', false, null);
+        }
+      }
+      if (input.textContent.trim().length > 0 && input.innerHTML.includes('<')) return true;
     } catch (e) {}
 
     try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
-    input.textContent = '';
+    input.innerHTML = '';
     await sleep(100);
 
-    // Method 2: textContent + InputEvent
+    // Method 2: innerHTML with <br> tags
     try {
-      input.textContent = text;
+      input.innerHTML = text.split('\n').map(l => l || '<br>').join('<br>');
       input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-      if (input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) return true;
+      if (input.textContent.trim().length > 0) return true;
     } catch (e) {}
 
     try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
-    input.textContent = '';
+    input.innerHTML = '';
     await sleep(100);
 
-    // Method 3: Paste simulation
+    // Method 3: innerText (preserves line breaks)
+    try {
+      input.innerText = text;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+      if (input.textContent.trim().length > 0) return true;
+    } catch (e) {}
+
+    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
+    input.innerHTML = '';
+    await sleep(100);
+
+    // Method 4: Paste simulation
     try {
       const dt = new DataTransfer();
       dt.setData('text/plain', text);
       input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
-      if (input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) return true;
-    } catch (e) {}
-
-    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
-    input.textContent = '';
-    await sleep(100);
-
-    // Method 4: Character by character
-    try {
-      input.focus();
-      for (const char of text) document.execCommand('insertText', false, char);
-      if (input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) return true;
+      if (input.textContent.trim().length > 0) return true;
     } catch (e) {}
 
     if (attempt < 2) {
