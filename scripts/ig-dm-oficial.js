@@ -317,27 +317,88 @@ function extractConvInfo(item) {
   };
 }
 
-// === SCROLL CONVERSATION LIST ===
-async function scrollConversationList() {
+// === SCROLL AND COLLECT CONVERSATIONS ===
+async function scrollAndCollectConversations() {
   const scrollContainer = findScrollContainer();
   if (!scrollContainer) {
     log('No se encontró contenedor de scroll. Ejecuta igDmDebug() para diagnosticar.', 'error');
-    return;
+    return [];
   }
-  log(`Contenedor de scroll encontrado. Iniciando scroll...`, 'info');
-  let lastHeight = 0;
-  const maxScrolls = IG_DM_CONFIG.maxScrolls || 10;
+
+  const threshold = getNotesThreshold();
+  const maxDays = IG_DM_CONFIG.semanasAtras * 7;
+  const maxScrolls = IG_DM_CONFIG.maxScrolls || 100;
+  const collected = new Map();
+  let lastScrollTop = -1;
+  let stableCount = 0;
+  let foundOlder = false;
+
+  log(`Contenedor de scroll encontrado. Iniciando recolección...`, 'info');
+
   for (let i = 0; i < maxScrolls; i++) {
+    const allDirAuto = scrollContainer.querySelectorAll('[dir="auto"]');
+    for (const el of allDirAuto) {
+      const text = el.textContent.trim();
+      if (!isNameText(text)) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.left > 500 || rect.left < 50) continue;
+      if (rect.top < threshold) continue;
+      if (rect.top > window.innerHeight + 200) continue;
+
+      let parent = el.parentElement;
+      let attempts = 0;
+      while (parent && parent !== document.body && attempts < 15) {
+        if (checkHasTimestamp(parent)) {
+          const parentRect = parent.getBoundingClientRect();
+          if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
+            if (!isNoteBubble(parent) && !collected.has(parent)) {
+              const info = extractConvInfo(parent);
+              collected.set(parent, info);
+              if (info.timeDays > maxDays) {
+                foundOlder = true;
+                log(`  Encontrada conversación antigua: ${info.name} (${info.timestamp}, ${info.timeDays}d) — deteniendo scroll`, 'warn');
+              }
+            }
+            break;
+          }
+        }
+        parent = parent.parentElement;
+        attempts++;
+      }
+    }
+
+    if (foundOlder) {
+      log(`Conversación antigua detectada. Scroll detenido en iteración ${i + 1}.`, 'info');
+      break;
+    }
+
     scrollContainer.scrollTop = scrollContainer.scrollHeight;
     await sleep(1500);
-    if (scrollContainer.scrollHeight === lastHeight) break;
-    lastHeight = scrollContainer.scrollHeight;
-    if (i % 10 === 0 && i > 0) log(`  Scroll ${i}/${maxScrolls}... (${scrollContainer.scrollHeight}px)`, 'info');
+
+    if (scrollContainer.scrollTop === lastScrollTop) {
+      stableCount++;
+      if (stableCount >= 2) {
+        log(`Scroll estabilizado. No hay más conversaciones.`, 'info');
+        break;
+      }
+    } else {
+      stableCount = 0;
+    }
+    lastScrollTop = scrollContainer.scrollTop;
+
+    if (i % 10 === 0 && i > 0) log(`  Scroll ${i}/${maxScrolls}... ${collected.size} conversaciones recolectadas`, 'info');
   }
-  log(`Scroll completado. Altura final: ${scrollContainer.scrollHeight}px`, 'info');
+
   scrollContainer.scrollTop = 0;
-  await sleep(1000);
-  log('Vuelta al inicio completada.', 'info');
+  await sleep(500);
+
+  const items = [...collected.keys()];
+  const filtered = items.filter((item) => {
+    return !items.some((other) => other !== item && other.contains(item));
+  });
+
+  log(`Recolección completada: ${filtered.length} conversaciones totales`, 'info');
+  return filtered;
 }
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===
@@ -504,17 +565,11 @@ async function igDmSender() {
   log(`  Dry run: ${IG_DM_CONFIG.dryRun}`);
   log(`  Iniciar desde: ${IG_DM_CONFIG.iniciarDesde}`);
 
-  // Step 1: Scroll to load all conversations
-  log('\n[PASO 1] Cargando conversaciones...', 'header');
-  await scrollConversationList();
-  await sleep(1000);
-
-  // Step 2: Find and filter conversations
-  log('[PASO 2] Filtrando conversaciones...', 'header');
-  let items = findConversationItems();
+  // Step 1+2: Scroll and collect conversations simultaneously
+  log('\n[PASO 1] Cargando y filtrando conversaciones...', 'header');
+  let items = await scrollAndCollectConversations();
   log(`Encontradas ${items.length} conversaciones totales`, 'info');
 
-  // Extract info and filter
   let conversations = items.map(extractConvInfo);
   const maxDays = IG_DM_CONFIG.semanasAtras * 7;
 
