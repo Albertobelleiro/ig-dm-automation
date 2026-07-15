@@ -17,12 +17,12 @@ https://chat.whatsapp.com/K6nVfphXdVr5o9DAZInWYu?mode=gi_t`,
 
   delayMin: 4000,
   delayMax: 6000,
-  maxMensajes: 50,
+  maxMensajes: 1500,
   iniciarDesde: 0,
   semanasAtras: 3,
   saltarGrupos: true,
   dryRun: true,
-  maxScrolls: 10,
+  maxScrolls: 100,
 };
 
 // === STOP FLAG ===
@@ -796,4 +796,4 @@ igDmSender.confirm = async function () {
   console.log('%c║  IG DM - MODO PRUEBA (DRY RUN)              ║', 'color:#FF9800;font-weight:bold;font-size:13px');
   console.log('%c║  NO ENVÍA MENSAJES REALES                   ║', 'color:#FF9800;font-size:11px');
   console.log('%c╚══════════════════════════════════════════════╝', 'color:#FF9800');
-  console.log('%cMáximo: 50 conversaciones. Ejecuta igDmSender() para empezar.', 'color:#4CAF50');
+  console.log('%cMáximo: 1500 conversaciones. Ejecuta igDmSender() para empezar.', 'color:#4CAF50');
