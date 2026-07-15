@@ -393,8 +393,16 @@ async function scrollAndCollectConversations() {
   await sleep(500);
 
   const result = [...collected.values()];
-  log(`Recolección completada: ${result.length} conversaciones totales`, 'info');
-  return result;
+
+  const seenNames = new Set();
+  const deduped = result.filter(c => {
+    if (seenNames.has(c.name)) return false;
+    seenNames.add(c.name);
+    return true;
+  });
+
+  log(`Recolección completada: ${deduped.length} conversaciones totales (${result.length - deduped.length} duplicadas)`, 'info');
+  return deduped;
 }
 
 // === FIND AND CLICK CONVERSATION BY NAME ===
@@ -443,70 +451,42 @@ async function findAndClickConversation(name) {
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===
 async function writeMessage(input, text) {
-  input.focus();
-  await sleep(200);
-
-  // Clear any existing content
-  input.textContent = '';
-
-  // Method 1: execCommand insertText (most reliable for Lexical)
-  try {
-    const success = document.execCommand('insertText', false, text);
-    if (success && input.textContent.trim().length > 0) {
-      return true;
-    }
-  } catch (e) {
-    // Continue to fallback
-  }
-
-  // Method 2: textContent + InputEvent
-  try {
-    input.textContent = text;
-    input.dispatchEvent(
-      new InputEvent('input', {
-        bubbles: true,
-        cancelable: true,
-        inputType: 'insertText',
-        data: text,
-      })
-    );
-    if (input.textContent.trim().length > 0) {
-      return true;
-    }
-  } catch (e) {
-    // Continue to fallback
-  }
-
-  // Method 3: Paste simulation with DataTransfer
-  try {
-    const dt = new DataTransfer();
-    dt.setData('text/plain', text);
-    const pasteEvent = new ClipboardEvent('paste', {
-      bubbles: true,
-      cancelable: true,
-      clipboardData: dt,
-    });
-    input.dispatchEvent(pasteEvent);
-    if (input.textContent.trim().length > 0) {
-      return true;
-    }
-  } catch (e) {
-    // Continue to fallback
-  }
-
-  // Method 4: Character by character with execCommand
-  try {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    input.click();
+    await sleep(300 + attempt * 200);
     input.focus();
-    for (const char of text) {
-      document.execCommand('insertText', false, char);
-    }
-    if (input.textContent.trim().length > 0) {
-      return true;
-    }
-  } catch (e) {
-    // All methods failed
-  }
+    await sleep(200);
+    input.textContent = '';
 
+    try {
+      const success = document.execCommand('insertText', false, text);
+      if (success && input.textContent.trim().length > 0) return true;
+    } catch (e) {}
+
+    try {
+      input.textContent = text;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+      if (input.textContent.trim().length > 0) return true;
+    } catch (e) {}
+
+    try {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', text);
+      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+      if (input.textContent.trim().length > 0) return true;
+    } catch (e) {}
+
+    try {
+      input.focus();
+      for (const char of text) document.execCommand('insertText', false, char);
+      if (input.textContent.trim().length > 0) return true;
+    } catch (e) {}
+
+    if (attempt < 2) {
+      log(`  Reintento escritura (${attempt + 2}/3)...`, 'warn');
+      await sleep(1000);
+    }
+  }
   return false;
 }
 
@@ -688,7 +668,7 @@ igDmSender.confirm = async function () {
         errors.push({ name: conv.name, error: 'Not found in list' });
         continue;
       }
-      await sleep(1500 + Math.random() * 500);
+      await sleep(2500 + Math.random() * 500);
 
       // Find message input
       const input = await waitForElement('div[role="textbox"][contenteditable="true"]', 5000);
