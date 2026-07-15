@@ -351,9 +351,9 @@ async function scrollAndCollectConversations() {
         if (checkHasTimestamp(parent)) {
           const parentRect = parent.getBoundingClientRect();
           if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
-            if (!isNoteBubble(parent) && !collected.has(parent)) {
+            if (!isNoteBubble(parent) && !collected.has(text)) {
               const info = extractConvInfo(parent);
-              collected.set(parent, info);
+              collected.set(text, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays, isGroup: info.isGroup });
               if (info.timeDays > maxDays) {
                 foundOlder = true;
                 log(`  Encontrada conversación antigua: ${info.name} (${info.timestamp}, ${info.timeDays}d) — deteniendo scroll`, 'warn');
@@ -392,13 +392,53 @@ async function scrollAndCollectConversations() {
   scrollContainer.scrollTop = 0;
   await sleep(500);
 
-  const items = [...collected.keys()];
-  const filtered = items.filter((item) => {
-    return !items.some((other) => other !== item && other.contains(item));
-  });
+  const result = [...collected.values()];
+  log(`Recolección completada: ${result.length} conversaciones totales`, 'info');
+  return result;
+}
 
-  log(`Recolección completada: ${filtered.length} conversaciones totales`, 'info');
-  return filtered;
+// === FIND AND CLICK CONVERSATION BY NAME ===
+async function findAndClickConversation(name) {
+  const scrollContainer = findScrollContainer();
+  if (!scrollContainer) return false;
+
+  const threshold = getNotesThreshold();
+  const maxAttempts = 50;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const allDirAuto = scrollContainer.querySelectorAll('[dir="auto"]');
+    for (const el of allDirAuto) {
+      const text = el.textContent.trim();
+      if (text !== name) continue;
+      if (!isNameText(text)) continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.left > 500 || rect.left < 50) continue;
+      if (rect.top < threshold) continue;
+      if (rect.top > window.innerHeight + 200) continue;
+
+      let parent = el.parentElement;
+      let attempts = 0;
+      while (parent && parent !== document.body && attempts < 15) {
+        if (checkHasTimestamp(parent)) {
+          const parentRect = parent.getBoundingClientRect();
+          if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
+            if (!isNoteBubble(parent)) {
+              parent.click();
+              return true;
+            }
+          }
+        }
+        parent = parent.parentElement;
+        attempts++;
+      }
+    }
+
+    scrollContainer.scrollTop += 300;
+    await sleep(800);
+  }
+
+  return false;
 }
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===
@@ -567,10 +607,9 @@ async function igDmSender() {
 
   // Step 1+2: Scroll and collect conversations simultaneously
   log('\n[PASO 1] Cargando y filtrando conversaciones...', 'header');
-  let items = await scrollAndCollectConversations();
-  log(`Encontradas ${items.length} conversaciones totales`, 'info');
+  let conversations = await scrollAndCollectConversations();
+  log(`Encontradas ${conversations.length} conversaciones totales`, 'info');
 
-  let conversations = items.map(extractConvInfo);
   const maxDays = IG_DM_CONFIG.semanasAtras * 7;
 
   conversations = conversations.filter((c) => {
@@ -640,9 +679,15 @@ igDmSender.confirm = async function () {
     }
 
     try {
-      // Click conversation
-      log(`${progress} Abriendo conversación con @${conv.name}...`, 'info');
-      conv.element.click();
+      // Find and click conversation by name
+      log(`${progress} Buscando @${conv.name}...`, 'info');
+      const clicked = await findAndClickConversation(conv.name);
+      if (!clicked) {
+        log(`${progress} No se encontró @${conv.name} en la lista. Saltando.`, 'error');
+        failed++;
+        errors.push({ name: conv.name, error: 'Not found in list' });
+        continue;
+      }
       await sleep(1500 + Math.random() * 500);
 
       // Find message input

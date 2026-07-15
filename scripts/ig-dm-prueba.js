@@ -373,7 +373,7 @@ async function scrollAndCollectConversations() {
   const threshold = getNotesThreshold();
   const maxDays = IG_DM_CONFIG.semanasAtras * 7;
   const maxScrolls = IG_DM_CONFIG.maxScrolls || 100;
-  const collected = new Map(); // key = element, value = convInfo
+  const collected = new Map(); // key = name, value = convInfo (NO element reference)
   let lastScrollTop = -1;
   let stableCount = 0;
   let foundOlder = false;
@@ -381,7 +381,6 @@ async function scrollAndCollectConversations() {
   log(`Contenedor de scroll encontrado. Iniciando recolección...`, 'info');
 
   for (let i = 0; i < maxScrolls; i++) {
-    // Find conversation items currently in the DOM
     const allDirAuto = scrollContainer.querySelectorAll('[dir="auto"]');
     for (const el of allDirAuto) {
       const text = el.textContent.trim();
@@ -390,20 +389,17 @@ async function scrollAndCollectConversations() {
       const rect = el.getBoundingClientRect();
       if (rect.left > 500 || rect.left < 50) continue;
       if (rect.top < threshold) continue;
-      if (rect.top > window.innerHeight + 200) continue; // Skip elements way below viewport
+      if (rect.top > window.innerHeight + 200) continue;
 
-      // Walk up to find the conversation container
       let parent = el.parentElement;
       let attempts = 0;
       while (parent && parent !== document.body && attempts < 15) {
         if (checkHasTimestamp(parent)) {
           const parentRect = parent.getBoundingClientRect();
           if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
-            if (!isNoteBubble(parent) && !collected.has(parent)) {
+            if (!isNoteBubble(parent) && !collected.has(text)) {
               const info = extractConvInfo(parent);
-              collected.set(parent, info);
-
-              // Check if we found a conversation older than the threshold
+              collected.set(text, { name: info.name, timestamp: info.timestamp, timeDays: info.timeDays, isGroup: info.isGroup });
               if (info.timeDays > maxDays) {
                 foundOlder = true;
                 log(`  Encontrada conversación antigua: ${info.name} (${info.timestamp}, ${info.timeDays}d) — deteniendo scroll`, 'warn');
@@ -417,17 +413,14 @@ async function scrollAndCollectConversations() {
       }
     }
 
-    // Stop if we found conversations older than the threshold
     if (foundOlder) {
       log(`Conversación antigua detectada. Scroll detenido en iteración ${i + 1}.`, 'info');
       break;
     }
 
-    // Scroll down
     scrollContainer.scrollTop = scrollContainer.scrollHeight;
     await sleep(1500);
 
-    // Check if scroll has stabilized (no more content loading)
     if (scrollContainer.scrollTop === lastScrollTop) {
       stableCount++;
       if (stableCount >= 2) {
@@ -444,18 +437,58 @@ async function scrollAndCollectConversations() {
     }
   }
 
-  // Scroll back to top
   scrollContainer.scrollTop = 0;
   await sleep(500);
 
-  // Convert Map to array and deduplicate
-  const items = [...collected.keys()];
-  const filtered = items.filter((item) => {
-    return !items.some((other) => other !== item && other.contains(item));
-  });
+  const result = [...collected.values()];
+  log(`Recolección completada: ${result.length} conversaciones totales`, 'info');
+  return result;
+}
 
-  log(`Recolección completada: ${filtered.length} conversaciones totales`, 'info');
-  return filtered;
+// === FIND AND CLICK CONVERSATION BY NAME ===
+async function findAndClickConversation(name) {
+  const scrollContainer = findScrollContainer();
+  if (!scrollContainer) return false;
+
+  const threshold = getNotesThreshold();
+  const maxAttempts = 50;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const allDirAuto = scrollContainer.querySelectorAll('[dir="auto"]');
+    for (const el of allDirAuto) {
+      const text = el.textContent.trim();
+      if (text !== name) continue;
+      if (!isNameText(text)) continue;
+
+      const rect = el.getBoundingClientRect();
+      if (rect.left > 500 || rect.left < 50) continue;
+      if (rect.top < threshold) continue;
+      if (rect.top > window.innerHeight + 200) continue;
+
+      // Walk up to find the clickable conversation container
+      let parent = el.parentElement;
+      let attempts = 0;
+      while (parent && parent !== document.body && attempts < 15) {
+        if (checkHasTimestamp(parent)) {
+          const parentRect = parent.getBoundingClientRect();
+          if (parentRect.left < 500 && parentRect.height > 30 && parentRect.height < 250) {
+            if (!isNoteBubble(parent)) {
+              parent.click();
+              return true;
+            }
+          }
+        }
+        parent = parent.parentElement;
+        attempts++;
+      }
+    }
+
+    // Not found in current viewport, scroll down
+    scrollContainer.scrollTop += 300;
+    await sleep(800);
+  }
+
+  return false;
 }
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===
@@ -624,11 +657,10 @@ async function igDmSender() {
 
   // Step 1+2: Scroll and collect conversations simultaneously
   log('\n[PASO 1] Cargando y filtrando conversaciones...', 'header');
-  let items = await scrollAndCollectConversations();
-  log(`Encontradas ${items.length} conversaciones totales`, 'info');
+  let conversations = await scrollAndCollectConversations();
+  log(`Encontradas ${conversations.length} conversaciones totales`, 'info');
 
-  // Extract info and filter
-  let conversations = items.map(extractConvInfo);
+  // Filter
   const maxDays = IG_DM_CONFIG.semanasAtras * 7;
 
   conversations = conversations.filter((c) => {
@@ -698,9 +730,15 @@ igDmSender.confirm = async function () {
     }
 
     try {
-      // Click conversation
-      log(`${progress} Abriendo conversación con @${conv.name}...`, 'info');
-      conv.element.click();
+      // Find and click conversation by name
+      log(`${progress} Buscando @${conv.name}...`, 'info');
+      const clicked = await findAndClickConversation(conv.name);
+      if (!clicked) {
+        log(`${progress} No se encontró @${conv.name} en la lista. Saltando.`, 'error');
+        failed++;
+        errors.push({ name: conv.name, error: 'Not found in list' });
+        continue;
+      }
       await sleep(1500 + Math.random() * 500);
 
       // Find message input
