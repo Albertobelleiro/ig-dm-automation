@@ -411,7 +411,10 @@ async function findAndClickConversation(name) {
   if (!scrollContainer) return false;
 
   const threshold = getNotesThreshold();
-  const maxAttempts = 50;
+  const maxAttempts = 80;
+
+  scrollContainer.scrollTop = 0;
+  await sleep(800);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const allDirAuto = scrollContainer.querySelectorAll('[dir="auto"]');
@@ -442,8 +445,8 @@ async function findAndClickConversation(name) {
       }
     }
 
-    scrollContainer.scrollTop += 300;
-    await sleep(800);
+    scrollContainer.scrollTop += 400;
+    await sleep(500);
   }
 
   return false;

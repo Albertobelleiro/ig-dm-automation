@@ -460,7 +460,11 @@ async function findAndClickConversation(name) {
   if (!scrollContainer) return false;
 
   const threshold = getNotesThreshold();
-  const maxAttempts = 50;
+  const maxAttempts = 80;
+
+  // Always start from top
+  scrollContainer.scrollTop = 0;
+  await sleep(800);
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const allDirAuto = scrollContainer.querySelectorAll('[dir="auto"]');
@@ -474,7 +478,6 @@ async function findAndClickConversation(name) {
       if (rect.top < threshold) continue;
       if (rect.top > window.innerHeight + 200) continue;
 
-      // Walk up to find the clickable conversation container
       let parent = el.parentElement;
       let attempts = 0;
       while (parent && parent !== document.body && attempts < 15) {
@@ -492,9 +495,9 @@ async function findAndClickConversation(name) {
       }
     }
 
-    // Not found in current viewport, scroll down
-    scrollContainer.scrollTop += 300;
-    await sleep(800);
+    // Scroll down progressively
+    scrollContainer.scrollTop += 400;
+    await sleep(500);
   }
 
   return false;
