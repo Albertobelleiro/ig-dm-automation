@@ -86,9 +86,9 @@ window.igDmDebug = function () {
 };
 
 // === GET NOTES THRESHOLD ===
-// Find the "Mensajes"/"Messages" header and use its bottom as the threshold
+// Find the "Mensajes"/"Messages" header — only use h1/h2, not dir="auto" (too many false matches)
 function getNotesThreshold() {
-  const headers = document.querySelectorAll('h1, h2, h3, [dir="auto"]');
+  const headers = document.querySelectorAll('h1, h2');
   for (const h of headers) {
     const text = h.textContent.trim().toLowerCase();
     if (text === 'mensajes' || text === 'messages') {
@@ -96,6 +96,9 @@ function getNotesThreshold() {
       return rect.bottom + 5;
     }
   }
+  // Fallback: find the scroll container's top
+  const sc = findScrollContainer();
+  if (sc) return sc.getBoundingClientRect().top - 5;
   return 260;
 }
 
@@ -379,6 +382,11 @@ async function scrollConversationList() {
     if (i % 10 === 0 && i > 0) log(`  Scroll ${i}/${maxScrolls}... (${scrollContainer.scrollHeight}px)`, 'info');
   }
   log(`Scroll completado. Altura final: ${scrollContainer.scrollHeight}px`, 'info');
+
+  // Scroll back to top so all conversation items have correct getBoundingClientRect positions
+  scrollContainer.scrollTop = 0;
+  await sleep(1000);
+  log('Vuelta al inicio completada.', 'info');
 }
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===

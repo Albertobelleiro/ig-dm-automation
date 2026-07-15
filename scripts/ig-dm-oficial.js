@@ -84,7 +84,7 @@ window.igDmDebug = function () {
 
 // === GET NOTES THRESHOLD ===
 function getNotesThreshold() {
-  const headers = document.querySelectorAll('h1, h2, h3, [dir="auto"]');
+  const headers = document.querySelectorAll('h1, h2');
   for (const h of headers) {
     const text = h.textContent.trim().toLowerCase();
     if (text === 'mensajes' || text === 'messages') {
@@ -92,6 +92,8 @@ function getNotesThreshold() {
       return rect.bottom + 5;
     }
   }
+  const sc = findScrollContainer();
+  if (sc) return sc.getBoundingClientRect().top - 5;
   return 260;
 }
 
@@ -333,6 +335,9 @@ async function scrollConversationList() {
     if (i % 10 === 0 && i > 0) log(`  Scroll ${i}/${maxScrolls}... (${scrollContainer.scrollHeight}px)`, 'info');
   }
   log(`Scroll completado. Altura final: ${scrollContainer.scrollHeight}px`, 'info');
+  scrollContainer.scrollTop = 0;
+  await sleep(1000);
+  log('Vuelta al inicio completada.', 'info');
 }
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===
