@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "IG DM Auto-Recovery",
+  "version": "1.0",
+  "description": "Auto-reinjects the IG DM script after page reload",
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/direct/*", "https://instagram.com/direct/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

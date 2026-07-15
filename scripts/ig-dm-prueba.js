@@ -44,10 +44,37 @@ window.onbeforeunload = function () {
 };
 
 // === SAVE SCRIPT TO SESSION STORAGE FOR AUTO-RECOVERY ===
-// Save the entire script source so it can be re-injected after a reload
+// Save the entire script source so the extension can re-inject it after a reload
+// When pasted in console, we reconstruct the source from the function definitions
 try {
-  sessionStorage.setItem('igDmScript', document.currentScript?.textContent || '');
-} catch (e) {}
+  // Build the script source from all defined functions and variables
+  var _scriptSource = '';
+  // Try to get the source of all functions
+  var _funcs = ['sleep', 'randomDelay', 'log', 'waitForElement', 'getNotesThreshold', 'isNoteBubble', 'isNameText', 'checkHasTimestamp', 'findScrollContainer', 'findConversationItems', 'extractTimestamp', 'parseTimestampToDays', 'extractConvInfo', 'scrollAndCollectConversations', 'findAndClickConversation', 'writeMessage', 'sendMessage', 'checkForPopups', 'saveSession', 'loadSession', 'clearSession', 'igDmSender'];
+  _scriptSource += 'const IG_DM_CONFIG = ' + JSON.stringify(IG_DM_CONFIG) + ';\n';
+  _scriptSource += 'window._igDmStop = false;\n';
+  _scriptSource += 'window.stopIGDM = ' + stopIGDM.toString() + ';\n';
+  _scriptSource += 'window.onbeforeunload = ' + (window.onbeforeunload ? window.onbeforeunload.toString() : 'null') + ';\n';
+  for (var i = 0; i < _funcs.length; i++) {
+    try {
+      var fn = eval(_funcs[i]);
+      if (typeof fn === 'function') {
+        _scriptSource += 'var ' + _funcs[i] + ' = ' + fn.toString() + ';\n';
+      }
+    } catch (e) {}
+  }
+  // Save igDmSender.confirm
+  if (typeof igDmSender !== 'undefined' && igDmSender.confirm) {
+    _scriptSource += 'igDmSender.confirm = ' + igDmSender.confirm.toString() + ';\n';
+  }
+  // Save the auto-resume and bootstrap
+  _scriptSource += '\n// Auto-resume\n';
+  _scriptSource += '(async function autoResume() { await sleep(3000); var session = loadSession(); if (session) { console.log("%c[IG-DM] Sesion pendiente. Auto-reanudando...", "color:#4CAF50;font-weight:bold"); await sleep(5000); if (!window._igDmStop) { igDmSender.confirm(); } } })();\n';
+  sessionStorage.setItem('igDmScript', _scriptSource);
+  console.log('%c[IG-DM] Script guardado en sessionStorage. La extension lo auto-inyectara tras una recarga.', 'color:#4CAF50');
+} catch (e) {
+  console.log('[IG-DM] No se pudo guardar el script:', e.message);
+}
 
 // === SESSION PERSISTENCE ===
 function saveSession(targetConvs, currentIndex, sent, failed, errors) {
