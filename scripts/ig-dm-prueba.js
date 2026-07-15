@@ -575,70 +575,82 @@ async function findAndClickConversation(name) {
 
 // === WRITE MESSAGE INTO CONTENTEDITABLE ===
 async function writeMessage(input, text) {
-  // Try up to 3 times with increasing waits
   for (let attempt = 0; attempt < 3; attempt++) {
-    // Click the input to focus it and activate Lexical editor
     input.click();
     await sleep(300 + attempt * 200);
-
-    // Focus
     input.focus();
     await sleep(200);
 
-    // Clear any existing content
+    // Clear existing content properly (Lexical needs selectAll + delete)
+    try {
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+    } catch (e) {}
     input.textContent = '';
+    // Dispatch input event so Lexical knows it was cleared
+    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
+    await sleep(100);
 
-    // Method 1: execCommand insertText (most reliable for Lexical)
+    // Verify input is actually empty before writing
+    if (input.textContent.trim().length > 0) {
+      // Still has content, try harder to clear
+      input.innerHTML = '';
+      await sleep(100);
+    }
+
+    // Method 1: execCommand insertText
     try {
       const success = document.execCommand('insertText', false, text);
-      if (success && input.textContent.trim().length > 0) {
+      if (success && input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) {
         return true;
       }
     } catch (e) {}
+
+    // Clear again before trying next method
+    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
+    input.textContent = '';
+    await sleep(100);
 
     // Method 2: textContent + InputEvent
     try {
       input.textContent = text;
-      input.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          cancelable: true,
-          inputType: 'insertText',
-          data: text,
-        })
-      );
-      if (input.textContent.trim().length > 0) {
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
+      if (input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) {
         return true;
       }
     } catch (e) {}
 
-    // Method 3: Paste simulation with DataTransfer
+    // Clear again
+    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
+    input.textContent = '';
+    await sleep(100);
+
+    // Method 3: Paste simulation
     try {
       const dt = new DataTransfer();
       dt.setData('text/plain', text);
-      const pasteEvent = new ClipboardEvent('paste', {
-        bubbles: true,
-        cancelable: true,
-        clipboardData: dt,
-      });
-      input.dispatchEvent(pasteEvent);
-      if (input.textContent.trim().length > 0) {
+      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
+      if (input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) {
         return true;
       }
     } catch (e) {}
 
-    // Method 4: Character by character with execCommand
+    // Clear again
+    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
+    input.textContent = '';
+    await sleep(100);
+
+    // Method 4: Character by character
     try {
       input.focus();
       for (const char of text) {
         document.execCommand('insertText', false, char);
       }
-      if (input.textContent.trim().length > 0) {
+      if (input.textContent.trim().length > 0 && input.textContent.includes(text.substring(0, 10))) {
         return true;
       }
     } catch (e) {}
 
-    // Wait before retrying
     if (attempt < 2) {
       log(`  Reintento escritura (${attempt + 2}/3)...`, 'warn');
       await sleep(1000);
