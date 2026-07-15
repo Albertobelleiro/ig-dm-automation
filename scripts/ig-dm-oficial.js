@@ -29,8 +29,40 @@ https://chat.whatsapp.com/K6nVfphXdVr5o9DAZInWYu?mode=gi_t`,
 window._igDmStop = false;
 window.stopIGDM = function () {
   window._igDmStop = true;
+  sessionStorage.removeItem('igDmSession');
   console.log('%c[IG-DM] STOP solicitado. Terminará después del mensaje actual.', 'color:#FF9800;font-weight:bold');
 };
+
+// === SESSION PERSISTENCE ===
+function saveSession(targetConvs, currentIndex, sent, failed, errors) {
+  sessionStorage.setItem('igDmSession', JSON.stringify({
+    conversations: targetConvs,
+    currentIndex: currentIndex,
+    sent: sent,
+    failed: failed,
+    errors: errors,
+    timestamp: Date.now(),
+  }));
+}
+
+function loadSession() {
+  const data = sessionStorage.getItem('igDmSession');
+  if (!data) return null;
+  try {
+    const session = JSON.parse(data);
+    if (Date.now() - session.timestamp > 30 * 60 * 1000) {
+      sessionStorage.removeItem('igDmSession');
+      return null;
+    }
+    return session;
+  } catch (e) {
+    return null;
+  }
+}
+
+function clearSession() {
+  sessionStorage.removeItem('igDmSession');
+}
 
 // === UTILS ===
 function sleep(ms) {
@@ -631,29 +663,46 @@ async function igDmSender() {
 
 // === CONFIRM AND RUN ===
 igDmSender.confirm = async function () {
-  const targetConvs = window._igDmPending;
-  if (!targetConvs) {
-    console.log('%c[IG-DM] No hay envío pendiente. Ejecuta igDmSender() primero.', 'color:#f44336');
-    return;
+  const existingSession = loadSession();
+  let targetConvs, startIndex, sent, failed, errors;
+
+  if (existingSession && !window._igDmPending) {
+    log('%c SESIÓN RECUPERADA — reanudando tras recarga de página', 'color:#4CAF50;font-weight:bold');
+    targetConvs = existingSession.conversations;
+    startIndex = existingSession.currentIndex;
+    sent = existingSession.sent;
+    failed = existingSession.failed;
+    errors = existingSession.errors || [];
+    log(`  Reanudando desde ${startIndex + 1}/${targetConvs.length}`, 'info');
+    log(`  Enviados hasta ahora: ${sent}, Fallidos: ${failed}`, 'info');
+  } else {
+    targetConvs = window._igDmPending;
+    if (!targetConvs) {
+      console.log('%c[IG-DM] No hay envío pendiente. Ejecuta igDmSender() primero.', 'color:#f44336');
+      return;
+    }
+    startIndex = 0;
+    sent = 0;
+    failed = 0;
+    errors = [];
   }
+
+  let skipped = 0;
 
   log('\n[INICIO] Enviando mensajes...', 'header');
 
-  let sent = 0;
-  let failed = 0;
-  let skipped = 0;
-  const errors = [];
-
-  for (let i = 0; i < targetConvs.length; i++) {
+  for (let i = startIndex; i < targetConvs.length; i++) {
     if (window._igDmStop) {
       log(`STOP detectado. Finalizando después de ${sent} mensajes enviados.`, 'warn');
+      clearSession();
       break;
     }
 
     const conv = targetConvs[i];
     const progress = `[${i + 1}/${targetConvs.length}]`;
 
-    // Check for popups
+    saveSession(targetConvs, i, sent, failed, errors);
+
     const popup = checkForPopups();
     if (popup === 'captcha') {
       log(`${progress} CAPTCHA/Challenge detectado. Pausando. Resuelve el captcha y ejecuta igDmSender.confirm() de nuevo.`, 'error');
@@ -662,7 +711,6 @@ igDmSender.confirm = async function () {
     }
 
     try {
-      // Find and click conversation by name
       log(`${progress} Buscando @${conv.name}...`, 'info');
       const clicked = await findAndClickConversation(conv.name);
       if (!clicked) {
@@ -673,7 +721,6 @@ igDmSender.confirm = async function () {
       }
       await sleep(2500 + Math.random() * 500);
 
-      // Find message input
       const input = await waitForElement('div[role="textbox"][contenteditable="true"]', 5000);
       if (!input) {
         log(`${progress} No se encontró el input de mensaje. Saltando.`, 'error');
@@ -682,7 +729,6 @@ igDmSender.confirm = async function () {
         continue;
       }
 
-      // Write message
       const written = await writeMessage(input, IG_DM_CONFIG.mensaje);
       if (!written) {
         log(`${progress} No se pudo escribir el mensaje. Saltando.`, 'error');
@@ -691,7 +737,6 @@ igDmSender.confirm = async function () {
         continue;
       }
 
-      // Verify content
       if (input.textContent.trim().length === 0) {
         log(`${progress} El input está vacío después de escribir. Saltando.`, 'error');
         failed++;
@@ -701,21 +746,18 @@ igDmSender.confirm = async function () {
 
       if (IG_DM_CONFIG.dryRun) {
         log(`${progress} DRY RUN - Mensaje escrito a @${conv.name} (no enviado)`, 'warn');
-        // Clear the input so it doesn't accidentally send
         input.textContent = '';
         sent++;
         await sleep(randomDelay());
         continue;
       }
 
-      // Send message
       const sent_ok = await sendMessage(input);
       if (sent_ok) {
         log(`${progress} Enviado a @${conv.name}`, 'success');
         sent++;
       } else {
         log(`${progress} Falló el envío a @${conv.name}. Intentando de nuevo...`, 'warn');
-        // Retry once
         await sleep(1000);
         const retry = await sendMessage(input);
         if (retry) {
@@ -725,12 +767,10 @@ igDmSender.confirm = async function () {
           log(`${progress} Falló el envío a @${conv.name}. Saltando.`, 'error');
           failed++;
           errors.push({ name: conv.name, error: 'Send failed' });
-          // Clear input
           input.textContent = '';
         }
       }
 
-      // Rate limit delay
       const delay = randomDelay();
       log(`  Esperando ${(delay / 1000).toFixed(1)}s...`, 'info');
       await sleep(delay);
@@ -741,7 +781,6 @@ igDmSender.confirm = async function () {
     }
   }
 
-  // Final summary
   console.log('%c╔══════════════════════════════════════════╗', 'color:#fff');
   console.log('%c║  RESUMEN FINAL                           ║', 'color:#fff;font-weight:bold;font-size:14px');
   console.log('%c╚══════════════════════════════════════════╝', 'color:#fff');
@@ -754,12 +793,27 @@ igDmSender.confirm = async function () {
   }
   log(`\nHecho. ${sent} mensajes enviados en total.`, 'header');
 
+  clearSession();
   window._igDmPending = null;
   if (window._igDmResolve) {
     window._igDmResolve({ sent, failed, skipped, errors });
     window._igDmResolve = null;
   }
 };
+
+// === AUTO-RESUME CHECK ===
+(async function autoResume() {
+  await sleep(3000);
+  const session = loadSession();
+  if (session) {
+    console.log('%c[IG-DM] Sesión pendiente detectada. Auto-reanudando en 5 segundos...', 'color:#4CAF50;font-weight:bold');
+    console.log('%c[IG-DM] Para CANCELAR, ejecuta: stopIGDM()', 'color:#FF9800;font-weight:bold');
+    await sleep(5000);
+    if (!window._igDmStop) {
+      igDmSender.confirm();
+    }
+  }
+})();
 
 // Auto-start info
   console.log('%c╔══════════════════════════════════════════════╗', 'color:#f44336');
