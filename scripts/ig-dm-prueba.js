@@ -585,22 +585,46 @@ async function writeMessage(input, text) {
     try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
     input.textContent = '';
     input.innerHTML = '';
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContent' }));
-    await sleep(100);
+    await sleep(150);
 
-    // Method 1: Insert line by line with insertParagraph for line breaks
+    // Method 1: Paste simulation (most reliable for preserving \n in Lexical)
+    try {
+      const dt = new DataTransfer();
+      dt.setData('text/plain', text);
+      const pasteEvent = new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt,
+      });
+      input.dispatchEvent(pasteEvent);
+      await sleep(300);
+      // Check if content was inserted with line breaks
+      if (input.textContent.trim().length > 0 && (input.innerHTML.includes('<') || input.textContent.includes('\n'))) {
+        return true;
+      }
+    } catch (e) {}
+
+    // Clear
+    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
+    input.innerHTML = '';
+    await sleep(150);
+
+    // Method 2: Line by line with Enter key simulation
     try {
       const lines = text.split('\n');
       for (let li = 0; li < lines.length; li++) {
         if (lines[li].length > 0) {
           document.execCommand('insertText', false, lines[li]);
         }
-        // Add line break between lines (not after the last one)
         if (li < lines.length - 1) {
-          document.execCommand('insertParagraph', false, null);
+          // Simulate Enter key press
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          input.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          input.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          await sleep(50);
         }
       }
-      // Verify content has multiple lines
+      await sleep(200);
       if (input.textContent.trim().length > 0 && input.innerHTML.includes('<')) {
         return true;
       }
@@ -609,38 +633,47 @@ async function writeMessage(input, text) {
     // Clear
     try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
     input.innerHTML = '';
-    await sleep(100);
+    await sleep(150);
 
-    // Method 2: innerHTML with <br> tags
+    // Method 3: Line by line with insertParagraph
     try {
-      input.innerHTML = text.split('\n').map(l => l || '<br>').join('<br>');
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-      if (input.textContent.trim().length > 0) return true;
+      const lines = text.split('\n');
+      for (let li = 0; li < lines.length; li++) {
+        if (lines[li].length > 0) {
+          document.execCommand('insertText', false, lines[li]);
+        }
+        if (li < lines.length - 1) {
+          document.execCommand('insertParagraph', false, null);
+          await sleep(50);
+        }
+      }
+      await sleep(200);
+      if (input.textContent.trim().length > 0 && input.innerHTML.includes('<')) {
+        return true;
+      }
     } catch (e) {}
 
     // Clear
     try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
     input.innerHTML = '';
-    await sleep(100);
+    await sleep(150);
 
-    // Method 3: innerText (preserves line breaks in contenteditable)
+    // Method 4: Line by line with insertLineBreak
     try {
-      input.innerText = text;
-      input.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: text }));
-      if (input.textContent.trim().length > 0) return true;
-    } catch (e) {}
-
-    // Clear
-    try { document.execCommand('selectAll', false, null); document.execCommand('delete', false, null); } catch (e) {}
-    input.innerHTML = '';
-    await sleep(100);
-
-    // Method 4: Paste simulation
-    try {
-      const dt = new DataTransfer();
-      dt.setData('text/plain', text);
-      input.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt }));
-      if (input.textContent.trim().length > 0) return true;
+      const lines = text.split('\n');
+      for (let li = 0; li < lines.length; li++) {
+        if (lines[li].length > 0) {
+          document.execCommand('insertText', false, lines[li]);
+        }
+        if (li < lines.length - 1) {
+          document.execCommand('insertLineBreak', false, null);
+          await sleep(50);
+        }
+      }
+      await sleep(200);
+      if (input.textContent.trim().length > 0) {
+        return true;
+      }
     } catch (e) {}
 
     if (attempt < 2) {
