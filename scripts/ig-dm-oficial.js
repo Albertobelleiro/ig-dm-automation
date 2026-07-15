@@ -49,12 +49,7 @@ function loadSession() {
   const data = sessionStorage.getItem('igDmSession');
   if (!data) return null;
   try {
-    const session = JSON.parse(data);
-    if (Date.now() - session.timestamp > 30 * 60 * 1000) {
-      sessionStorage.removeItem('igDmSession');
-      return null;
-    }
-    return session;
+    return JSON.parse(data);
   } catch (e) {
     return null;
   }
