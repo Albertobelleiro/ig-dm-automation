@@ -30,8 +30,22 @@ window._igDmStop = false;
 window.stopIGDM = function () {
   window._igDmStop = true;
   sessionStorage.removeItem('igDmSession');
+  sessionStorage.removeItem('igDmScript');
+  window.onbeforeunload = null;
   console.log('%c[IG-DM] STOP solicitado. Terminará después del mensaje actual.', 'color:#FF9800;font-weight:bold');
 };
+
+// === PREVENT PAGE RELOAD ===
+window.onbeforeunload = function () {
+  if (!window._igDmStop) {
+    return 'El script de DMs está corriendo. ¿Seguro que quieres salir?';
+  }
+};
+
+// === SAVE SCRIPT TO SESSION STORAGE FOR AUTO-RECOVERY ===
+try {
+  sessionStorage.setItem('igDmScript', document.currentScript?.textContent || '');
+} catch (e) {}
 
 // === SESSION PERSISTENCE ===
 function saveSession(targetConvs, currentIndex, sent, failed, errors) {
@@ -809,6 +823,18 @@ igDmSender.confirm = async function () {
     }
   }
 })();
+
+// === RE-INJECT PROTECTION ===
+try {
+  const bootstrap = `
+    (async function() {
+      const code = sessionStorage.getItem('igDmScript');
+      if (!code) { console.log('[IG-DM] No hay script guardado. Pega el script completo.'); return; }
+      eval(code);
+    })();
+  `;
+  sessionStorage.setItem('igDmBootstrap', bootstrap);
+} catch (e) {}
 
 // Auto-start info
   console.log('%c╔══════════════════════════════════════════════╗', 'color:#f44336');
