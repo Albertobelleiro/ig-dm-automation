@@ -17,102 +17,105 @@
           <span class="brand-sub">Instagram Direct</span>
         </div>
       </div>
-      <span class="version">v2.0</span>
+      <span class="version">v2.1</span>
     </header>
 
-    <!-- Section: Mensaje -->
-    <section class="block">
-      <div class="block-head">
-        <span class="block-title">Mensaje</span>
-        <label class="switch">
-          <input type="checkbox" id="personalized">
-          <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span class="switch-label">Personalizado <code>{nombre}</code></span>
-        </label>
-      </div>
-      <textarea id="message" class="field-textarea" rows="6" placeholder="Escribe tu mensaje aquí…
+    <!-- Mode tabs -->
+    <nav class="tabs" id="modeTabs">
+      <button class="tab is-active" data-mode="official">Oficial</button>
+      <button class="tab" data-mode="dryrun">Prueba</button>
+      <button class="tab" data-mode="custom">Personalizado</button>
+    </nav>
 
-Usa {nombre} para personalizar"></textarea>
+    <!-- Empty state: Instagram Direct not open -->
+    <section class="empty" id="emptyState" hidden>
+      <div class="empty-icon">⌖</div>
+      <p class="empty-title">Instagram Direct no está abierto</p>
+      <p class="empty-sub">Abre la bandeja de DMs para empezar a enviar.</p>
+      <button id="openDirectBtn" class="btn btn-primary btn-block">Abrir Instagram Direct</button>
     </section>
 
-    <!-- Section: Configuración -->
-    <section class="block">
-      <div class="block-head">
-        <span class="block-title">Configuración</span>
-      </div>
+    <!-- Working UI -->
+    <main id="workUI">
+      <!-- Mensaje -->
+      <section class="block">
+        <div class="block-head">
+          <span class="block-title">Mensaje</span>
+          <span class="mode-hint" id="modeHint">Envío real · sin personalizar</span>
+        </div>
+        <textarea id="message" class="field-textarea" rows="6" placeholder="Escribe tu mensaje aquí…"></textarea>
+      </section>
 
-      <div class="row-grid">
-        <div class="field">
-          <label for="delayMin">Delay mín.</label>
-          <div class="input-affix">
-            <input type="number" id="delayMin" min="500" max="30000" step="500" value="4000">
-            <span>ms</span>
+      <!-- Configuración -->
+      <section class="block">
+        <div class="block-head"><span class="block-title">Configuración</span></div>
+        <div class="row-grid">
+          <div class="field">
+            <label for="delayMin">Delay mín.</label>
+            <div class="input-affix"><input type="number" id="delayMin" min="500" max="30000" step="500" value="4000"><span>ms</span></div>
+          </div>
+          <div class="field">
+            <label for="delayMax">Delay máx.</label>
+            <div class="input-affix"><input type="number" id="delayMax" min="500" max="30000" step="500" value="6000"><span>ms</span></div>
+          </div>
+          <div class="field">
+            <label for="maxMessages">Máx. mensajes</label>
+            <input type="number" id="maxMessages" min="1" max="5000" value="1500">
+          </div>
+          <div class="field">
+            <label for="weeksBack">Semanas atrás</label>
+            <input type="number" id="weeksBack" min="1" max="52" value="3">
           </div>
         </div>
-        <div class="field">
-          <label for="delayMax">Delay máx.</label>
-          <div class="input-affix">
-            <input type="number" id="delayMax" min="500" max="30000" step="500" value="6000">
-            <span>ms</span>
+        <div class="toggles">
+          <label class="switch">
+            <input type="checkbox" id="skipGroups" checked>
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-label">Saltar grupos</span>
+          </label>
+        </div>
+      </section>
+
+      <!-- Estado -->
+      <section class="block" id="progressSection">
+        <div class="block-head">
+          <span class="block-title">Estado</span>
+          <span class="status-pill idle" id="statusPill">
+            <span class="status-dot idle" id="statusDot"></span>
+            <span class="status-text" id="statusText">Listo</span>
+          </span>
+        </div>
+
+        <div class="progress">
+          <div class="progress-top">
+            <span id="progressFraction">0/0</span>
+            <span class="progress-pct" id="progressPercent">0%</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" id="progressFill" style="width: 0%"></div></div>
+          <div class="progress-stats">
+            <span class="stat"><span class="stat-dot ok"></span>Enviados <b id="sentCount">0</b></span>
+            <span class="stat"><span class="stat-dot err"></span>Fallidos <b id="failedCount">0</b></span>
+            <span class="stat current" id="currentRecipient" style="display:none">Actual: <b id="currentName">—</b></span>
           </div>
         </div>
-        <div class="field">
-          <label for="maxMessages">Máx. mensajes</label>
-          <input type="number" id="maxMessages" min="1" max="5000" value="1500">
+
+        <!-- Resume banner: shown when there's a saved session that was stopped/paused -->
+        <div class="resume" id="resumeBanner" hidden>
+          <div class="resume-text">
+            <span class="resume-title">Sesión pausada</span>
+            <span class="resume-sub" id="resumeSub">Quedan <b id="resumeRemaining">0</b> mensajes</span>
+          </div>
+          <button id="resumeBtn" class="btn btn-accent btn-sm">Reanudar</button>
         </div>
-        <div class="field">
-          <label for="weeksBack">Semanas atrás</label>
-          <input type="number" id="weeksBack" min="1" max="52" value="3">
-        </div>
+      </section>
+
+      <!-- Actions -->
+      <div class="actions">
+        <button id="startBtn" class="btn btn-primary">Iniciar</button>
+        <button id="stopBtn" class="btn btn-ghost" disabled>Detener</button>
       </div>
+    </main>
 
-      <div class="toggles">
-        <label class="switch">
-          <input type="checkbox" id="skipGroups" checked>
-          <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span class="switch-label">Saltar grupos</span>
-        </label>
-        <label class="switch switch-warn">
-          <input type="checkbox" id="dryRun">
-          <span class="switch-track"><span class="switch-thumb"></span></span>
-          <span class="switch-label">Dry run (no enviar)</span>
-        </label>
-      </div>
-    </section>
-
-    <!-- Section: Estado -->
-    <section class="block" id="progressSection">
-      <div class="block-head">
-        <span class="block-title">Estado</span>
-        <span class="status-pill idle" id="statusPill">
-          <span class="status-dot idle" id="statusDot"></span>
-          <span class="status-text" id="statusText">Listo</span>
-        </span>
-      </div>
-
-      <div class="progress">
-        <div class="progress-top">
-          <span id="progressFraction">0/0</span>
-          <span class="progress-pct" id="progressPercent">0%</span>
-        </div>
-        <div class="progress-bar">
-          <div class="progress-fill" id="progressFill" style="width: 0%"></div>
-        </div>
-        <div class="progress-stats">
-          <span class="stat"><span class="stat-dot ok"></span>Enviados <b id="sentCount">0</b></span>
-          <span class="stat"><span class="stat-dot err"></span>Fallidos <b id="failedCount">0</b></span>
-          <span class="stat current" id="currentRecipient" style="display:none">Actual: <b id="currentName">—</b></span>
-        </div>
-      </div>
-    </section>
-
-    <!-- Actions -->
-    <div class="actions">
-      <button id="startBtn" class="btn btn-primary">Iniciar</button>
-      <button id="stopBtn" class="btn btn-ghost" disabled>Detener</button>
-    </div>
-
-    <!-- Footer -->
     <footer class="app-footer">Instagram DM Automator</footer>
   </div>
 

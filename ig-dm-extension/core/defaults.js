@@ -15,6 +15,7 @@ var DEFAULTS = {
     'https://chat.whatsapp.com/K6nVfphXdVr5o9DAZInWYu?mode=gi_t'
   ].join('\n'),
 
+  mode: 'official',   // 'official' | 'dryrun' | 'custom'
   personalized: false,
   delayMin: 4000,
   delayMax: 6000,

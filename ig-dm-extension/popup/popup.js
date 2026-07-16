@@ -1,16 +1,19 @@
 // IG DM Automator — Popup Script
-// Binds form controls, handles Start/Stop, polls progress from chrome.storage
+// Tabs (mode) + auto-open Direct + robust Start + Resume + progress polling
 
 // ── DOM refs ──
 var els = {
+  modeTabs: document.getElementById('modeTabs'),
+  modeHint: document.getElementById('modeHint'),
+  emptyState: document.getElementById('emptyState'),
+  workUI: document.getElementById('workUI'),
+  openDirectBtn: document.getElementById('openDirectBtn'),
   message: document.getElementById('message'),
-  personalized: document.getElementById('personalized'),
   delayMin: document.getElementById('delayMin'),
   delayMax: document.getElementById('delayMax'),
   maxMessages: document.getElementById('maxMessages'),
   weeksBack: document.getElementById('weeksBack'),
   skipGroups: document.getElementById('skipGroups'),
-  dryRun: document.getElementById('dryRun'),
   startBtn: document.getElementById('startBtn'),
   stopBtn: document.getElementById('stopBtn'),
   statusDot: document.getElementById('statusDot'),
@@ -22,25 +25,40 @@ var els = {
   sentCount: document.getElementById('sentCount'),
   failedCount: document.getElementById('failedCount'),
   currentRecipient: document.getElementById('currentRecipient'),
-  currentName: document.getElementById('currentName')
+  currentName: document.getElementById('currentName'),
+  resumeBanner: document.getElementById('resumeBanner'),
+  resumeBtn: document.getElementById('resumeBtn'),
+  resumeRemaining: document.getElementById('resumeRemaining'),
+  resumeSub: document.getElementById('resumeSub')
 };
 
 var _pollInterval = null;
 var _currentTabId = null;
+var _mode = 'official';
+
+// Mode → derived flags (content script still reads dryRun + personalized)
+var MODE_FLAGS = {
+  official: { dryRun: false, personalized: false, hint: 'Envío real · sin personalizar' },
+  dryrun:   { dryRun: true,  personalized: false, hint: 'Prueba · no se envía nada' },
+  custom:   { dryRun: false, personalized: true,  hint: 'Envío real · con {nombre}' }
+};
+
+var DIRECT_URL = 'https://www.instagram.com/direct/inbox/';
+var DIRECT_TAB_PATTERNS = ['*://www.instagram.com/direct/*', '*://instagram.com/direct/*'];
 
 // ── Load config from storage and populate form ──
 async function loadAndPopulate() {
   try {
     var data = await chrome.storage.local.get('igDmConfig');
     var config = data.igDmConfig || DEFAULTS;
+    _mode = config.mode || 'official';
+    setMode(_mode, false);
     els.message.value = config.message || '';
-    els.personalized.checked = config.personalized || false;
     els.delayMin.value = config.delayMin || 4000;
     els.delayMax.value = config.delayMax || 6000;
     els.maxMessages.value = config.maxMessages || 1500;
     els.weeksBack.value = config.weeksBack || 3;
     els.skipGroups.checked = config.skipGroups !== false;
-    els.dryRun.checked = config.dryRun || false;
   } catch (e) {
     console.error('Error loading config:', e);
   }
@@ -49,15 +67,17 @@ async function loadAndPopulate() {
 // ── Save config to storage ──
 async function saveConfig() {
   try {
+    var flags = MODE_FLAGS[_mode] || MODE_FLAGS.official;
     var config = {
+      mode: _mode,
+      personalized: flags.personalized,
+      dryRun: flags.dryRun,
       message: els.message.value,
-      personalized: els.personalized.checked,
       delayMin: parseInt(els.delayMin.value) || 4000,
       delayMax: parseInt(els.delayMax.value) || 6000,
       maxMessages: parseInt(els.maxMessages.value) || 1500,
       weeksBack: parseInt(els.weeksBack.value) || 3,
       skipGroups: els.skipGroups.checked,
-      dryRun: els.dryRun.checked,
       maxScrolls: 100
     };
     await chrome.storage.local.set({ igDmConfig: config });
@@ -66,11 +86,138 @@ async function saveConfig() {
   }
 }
 
-// ── Poll progress from storage and update UI ──
+// ── Mode switching ──
+function setMode(mode, ensureNombre) {
+  _mode = mode;
+  // Active tab pill
+  var tabs = els.modeTabs.querySelectorAll('.tab');
+  tabs.forEach(function (t) { t.classList.toggle('is-active', t.dataset.mode === mode); });
+  // Hint text
+  els.modeHint.textContent = (MODE_FLAGS[mode] || MODE_FLAGS.official).hint;
+
+  // Custom mode → auto-add {nombre} greeting if missing
+  if (mode === 'custom' && ensureNombre) {
+    var msg = els.message.value || '';
+    if (!msg.includes('{nombre}')) {
+      els.message.value = '¡Hey {nombre}! 👋\n\n' + msg;
+    }
+  }
+}
+
+// ── Find a Direct tab ──
+async function getDirectTab() {
+  try {
+    var tabs = await chrome.tabs.query({ url: DIRECT_TAB_PATTERNS });
+    return tabs[0] || null;
+  } catch (e) { return null; }
+}
+
+// ── Open Instagram Direct if not already open ──
+async function openDirectIfNeeded() {
+  var tab = await getDirectTab();
+  if (tab) return tab;
+  await chrome.tabs.create({ url: DIRECT_URL, active: true });
+  return null; // popup will likely close; caller re-checks later
+}
+
+// ── Send a message to the content script, retry until it answers ──
+async function sendToContent(tabId, message, retries) {
+  retries = retries || 10;
+  for (var i = 0; i < retries; i++) {
+    try {
+      return await chrome.tabs.sendMessage(tabId, message);
+    } catch (e) {
+      // Content script not ready yet — wait and retry
+      await new Promise(function (r) { setTimeout(r, 600); });
+    }
+  }
+  return null;
+}
+
+// ── Start sending ──
+async function handleStart() {
+  await saveConfig();
+
+  var tab = await getDirectTab();
+  if (!tab) {
+    // Open it; popup may close. User clicks Iniciar again after it loads.
+    await chrome.tabs.create({ url: DIRECT_URL, active: true });
+    return;
+  }
+  _currentTabId = tab.id;
+
+  // Make sure the tab is actually showing Direct (SPA might be elsewhere)
+  if (!/\/direct\//.test(tab.url || '')) {
+    await chrome.tabs.update(tab.id, { url: DIRECT_URL, active: true });
+    await waitTabLoaded(tab.id);
+  }
+
+  // Reset progress + clear any old session (fresh Iniciar)
+  await chrome.storage.local.set({
+    igDmProgress: {
+      status: 'scanning', total: 0, current: 0, sent: 0, failed: 0,
+      errors: [], currentName: '', startedAt: Date.now()
+    }
+  });
+  await chrome.storage.local.remove('igDmSession');
+
+  // Send START (retry until content script answers)
+  var resp = await sendToContent(tab.id, { action: 'START' }, 12);
+  if (!resp) {
+    alert('⚠ No se pudo iniciar. Recarga la pestaña de Instagram Direct e inténtalo de nuevo.');
+  }
+}
+
+// ── Resume from a saved session ──
+async function handleResume() {
+  var tab = await getDirectTab();
+  if (!tab) {
+    await chrome.tabs.create({ url: DIRECT_URL, active: true });
+    return;
+  }
+  _currentTabId = tab.id;
+  var resp = await sendToContent(tab.id, { action: 'RESUME' }, 12);
+  if (!resp) {
+    alert('⚠ No se pudo reanudar. Recarga la pestaña de Instagram Direct e inténtalo de nuevo.');
+  }
+}
+
+// ── Stop sending ──
+async function handleStop() {
+  var tab = null;
+  if (_currentTabId) { try { tab = await chrome.tabs.get(_currentTabId); } catch (e) {} }
+  if (!tab) tab = await getDirectTab();
+  if (tab) {
+    try { await chrome.tabs.sendMessage(tab.id, { action: 'STOP' }); } catch (e) {}
+  }
+  // The content script keeps the session + sets status 'stopped'.
+  // UI will reflect the resume banner on next poll.
+}
+
+// ── Wait for a tab to finish loading ──
+function waitTabLoaded(tabId) {
+  return new Promise(function (resolve) {
+    var done = false;
+    function finish() {
+      if (done) return;
+      done = true;
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      resolve();
+    }
+    function onUpdated(id, info) {
+      if (id === tabId && info.status === 'complete') finish();
+    }
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    setTimeout(finish, 8000); // safety timeout
+  });
+}
+
+// ── Poll progress + session from storage and update UI ──
 async function updateProgress() {
   try {
-    var data = await chrome.storage.local.get('igDmProgress');
+    var data = await chrome.storage.local.get(['igDmProgress', 'igDmSession']);
     var p = data.igDmProgress || DEFAULT_PROGRESS;
+    var session = data.igDmSession || null;
 
     // Status dot + pill + text
     var statusMap = {
@@ -91,138 +238,91 @@ async function updateProgress() {
     var pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
     els.progressPercent.textContent = pct + '%';
     els.progressFill.style.width = pct + '%';
-
-    // Counts
     els.sentCount.textContent = p.sent;
     els.failedCount.textContent = p.failed;
 
     // Current recipient
     if (p.currentName && (p.status === 'sending' || p.status === 'paused')) {
-      els.currentRecipient.style.display = 'block';
+      els.currentRecipient.style.display = '';
       els.currentName.textContent = p.currentName;
     } else {
       els.currentRecipient.style.display = 'none';
     }
 
+    // Resume banner: show when there's a saved stopped/paused session + not running
+    var running = (p.status === 'scanning' || p.status === 'sending');
+    var canResume = !!session && !running && (p.status === 'stopped' || p.status === 'paused' || p.status === 'idle');
+    if (canResume) {
+      els.resumeBanner.hidden = false;
+      var remaining = (p.total || (session && session.conversations ? session.conversations.length : 0)) - p.current;
+      if (p.status === 'paused') {
+        els.resumeBanner.querySelector('.resume-title').textContent = 'CAPTCHA pendiente';
+        els.resumeSub.innerHTML = 'Resuélvelo en la página y pulsa Reanudar';
+      } else {
+        els.resumeBanner.querySelector('.resume-title').textContent = 'Sesión pausada';
+        els.resumeSub.innerHTML = 'Quedan <b>' + Math.max(0, remaining) + '</b> mensajes';
+      }
+    } else {
+      els.resumeBanner.hidden = true;
+    }
+
     // Button states
-    var running = (p.status === 'scanning' || p.status === 'sending' || p.status === 'paused');
     els.startBtn.disabled = running;
     els.stopBtn.disabled = !running;
     els.stopBtn.classList.toggle('is-danger', running);
   } catch (e) {
-    // Storage might not be available yet
+    // storage might not be ready
   }
 }
 
-// ── Start polling ──
-function startPolling() {
-  updateProgress();
-  _pollInterval = setInterval(updateProgress, 500);
-}
-
-// ── Stop polling ──
-function stopPolling() {
-  if (_pollInterval) {
-    clearInterval(_pollInterval);
-    _pollInterval = null;
-  }
-}
-
-// ── Get current Instagram Direct tab ──
-async function getDirectTab() {
-  try {
-    var tabs = await chrome.tabs.query({
-      url: ['*://www.instagram.com/direct/*', '*://instagram.com/direct/*']
-    });
-    return tabs[0] || null;
-  } catch (e) {
-    return null;
-  }
-}
-
-// ── Start sending ──
-async function handleStart() {
-  // Save config first
-  await saveConfig();
-
+// ── Empty-state detection: show Direct-not-open UI if no Direct tab ──
+async function refreshEmptyState() {
   var tab = await getDirectTab();
   if (!tab) {
-    alert('⚠ Abre Instagram Direct (instagram.com/direct/) primero.');
-    return;
-  }
-
-  _currentTabId = tab.id;
-
-  // Reset progress
-  await chrome.storage.local.set({
-    igDmProgress: {
-      status: 'scanning',
-      total: 0,
-      current: 0,
-      sent: 0,
-      failed: 0,
-      errors: [],
-      currentName: '',
-      startedAt: Date.now()
-    }
-  });
-
-  // Clear any previous session
-  await chrome.storage.local.remove('igDmSession');
-
-  // Send START command to content script
-  try {
-    var response = await chrome.tabs.sendMessage(tab.id, { action: 'START' });
-    console.log('START response:', response);
-  } catch (e) {
-    console.error('Error sending START:', e);
-    alert('⚠ No se pudo iniciar. Recarga la página de Instagram Direct e inténtalo de nuevo.');
+    els.emptyState.hidden = false;
+    els.workUI.hidden = true;
+  } else {
+    els.emptyState.hidden = true;
+    els.workUI.hidden = false;
+    _currentTabId = tab.id;
   }
 }
 
-// ── Stop sending ──
-async function handleStop() {
-  var tab = null;
-  if (_currentTabId) {
-    try {
-      tab = await chrome.tabs.get(_currentTabId);
-    } catch (e) {
-      // Tab might be closed
-    }
-  }
-  if (!tab) {
-    tab = await getDirectTab();
-  }
-
-  if (tab) {
-    try {
-      await chrome.tabs.sendMessage(tab.id, { action: 'STOP' });
-    } catch (e) {
-      console.error('Error sending STOP:', e);
-    }
-  }
-
-  // Update progress to stopped
-  try {
-    var data = await chrome.storage.local.get('igDmProgress');
-    var p = data.igDmProgress || {};
-    p.status = 'stopped';
-    await chrome.storage.local.set({ igDmProgress: p });
-    await chrome.storage.local.remove('igDmSession');
-  } catch (e) {}
+// ── Polling ──
+function startPolling() {
+  updateProgress();
+  refreshEmptyState();
+  _pollInterval = setInterval(function () {
+    updateProgress();
+    refreshEmptyState();
+  }, 500);
+}
+function stopPolling() {
+  if (_pollInterval) { clearInterval(_pollInterval); _pollInterval = null; }
 }
 
 // ── Event listeners ──
 els.startBtn.addEventListener('click', handleStart);
 els.stopBtn.addEventListener('click', handleStop);
+els.resumeBtn.addEventListener('click', handleResume);
+els.openDirectBtn.addEventListener('click', async function () {
+  await chrome.tabs.create({ url: DIRECT_URL, active: true });
+});
 
-// Auto-save config on change
-var autoSaveEls = [els.message, els.personalized, els.delayMin, els.delayMax,
-  els.maxMessages, els.weeksBack, els.skipGroups, els.dryRun];
+// Mode tabs
+els.modeTabs.addEventListener('click', function (e) {
+  var tab = e.target.closest('.tab');
+  if (!tab) return;
+  var mode = tab.dataset.mode;
+  setMode(mode, true);   // ensureNombre when switching to custom
+  saveConfig();
+});
 
+// Auto-save config on input
+var autoSaveEls = [els.message, els.delayMin, els.delayMax, els.maxMessages, els.weeksBack, els.skipGroups];
 autoSaveEls.forEach(function (el) {
-  var eventType = (el.tagName === 'TEXTAREA' || el.type === 'number') ? 'input' : 'change';
-  el.addEventListener(eventType, saveConfig);
+  var ev = (el.tagName === 'TEXTAREA' || el.type === 'number') ? 'input' : 'change';
+  el.addEventListener(ev, saveConfig);
 });
 
 // ── Initialize ──
@@ -231,5 +331,4 @@ autoSaveEls.forEach(function (el) {
   startPolling();
 })();
 
-// Clean up polling when popup closes
 window.addEventListener('unload', stopPolling);

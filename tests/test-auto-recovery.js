@@ -55,6 +55,10 @@ assert('Has writeMessage (4 methods)', contentJs.includes('async function writeM
 assert('Has sendMessage', contentJs.includes('async function sendMessage'));
 assert('Has parseTimestampToDays', contentJs.includes('function parseTimestampToDays'));
 assert('Has checkForPopups (CAPTCHA)', contentJs.includes('function checkForPopups'));
+assert('Has _running guard', contentJs.includes('var _running = false'));
+assert('Listens for RESUME command', contentJs.includes("action === 'RESUME'"));
+assert('STOP keeps session (no clearSession on stop)', !/if \(_stopFlag\)[^;]*clearSession/.test(contentJs));
+assert('autoRecover respects stopped status', contentJs.includes("lastStatus === 'stopped'"));
 console.log();
 
 // ── Test 3: manifest.json v2.0 validation ──
@@ -88,21 +92,26 @@ assert('popup.js exists', fs.existsSync('/Volumes/SSD/malalts/ig-dm-extension/po
 var popupJs = fs.readFileSync('/Volumes/SSD/malalts/ig-dm-extension/popup/popup.js', 'utf-8');
 assert('Has handleStart', popupJs.includes('async function handleStart'));
 assert('Has handleStop', popupJs.includes('async function handleStop'));
+assert('Has handleResume', popupJs.includes('async function handleResume'));
 assert('Has updateProgress', popupJs.includes('async function updateProgress'));
 assert('Has saveConfig', popupJs.includes('async function saveConfig'));
-assert('Has progress polling 500ms', popupJs.includes('setInterval(updateProgress, 500)'));
+assert('Has progress polling 500ms', popupJs.includes(', 500)') && popupJs.includes('setInterval'));
 assert('Sends START via tabs.sendMessage', popupJs.includes("action: 'START'"));
 assert('Sends STOP via tabs.sendMessage', popupJs.includes("action: 'STOP'"));
+assert('Sends RESUME via tabs.sendMessage', popupJs.includes("action: 'RESUME'"));
+assert('Has mode flags', popupJs.includes('MODE_FLAGS'));
 assert('Reads config from storage', popupJs.includes("chrome.storage.local.get('igDmConfig')"));
 assert('Has status dot states', popupJs.includes('status-dot') || popupJs.includes('statusDot'));
 
 var popupHtml = fs.readFileSync('/Volumes/SSD/malalts/ig-dm-extension/popup/popup.html', 'utf-8');
 assert('Has message textarea', popupHtml.includes('id="message"'));
-assert('Has personalized checkbox', popupHtml.includes('id="personalized"'));
 assert('Has delay inputs', popupHtml.includes('id="delayMin"') && popupHtml.includes('id="delayMax"'));
-assert('Has dryRun checkbox', popupHtml.includes('id="dryRun"'));
 assert('Has start/stop buttons', popupHtml.includes('id="startBtn"') && popupHtml.includes('id="stopBtn"'));
 assert('Has progress section', popupHtml.includes('progressSection'));
+assert('Has mode tabs', popupHtml.includes('id="modeTabs"'));
+assert('Has resume banner', popupHtml.includes('id="resumeBanner"'));
+assert('Has empty state', popupHtml.includes('id="emptyState"'));
+assert('Has openDirect button', popupHtml.includes('id="openDirectBtn"'));
 assert('Loads core scripts', popupHtml.includes('../core/defaults.js') && popupHtml.includes('../core/storage.js'));
 console.log();
 

@@ -88,9 +88,12 @@ assert('popup.js exists', fs.existsSync(popupJs));
 var popupJsContent = fs.readFileSync(popupJs, 'utf-8');
 assert('Has handleStart', popupJsContent.includes('async function handleStart'));
 assert('Has handleStop', popupJsContent.includes('async function handleStop'));
+assert('Has handleResume', popupJsContent.includes('async function handleResume'));
 assert('Has updateProgress', popupJsContent.includes('async function updateProgress'));
 assert('Has saveConfig', popupJsContent.includes('async function saveConfig'));
-assert('Has progress polling', popupJsContent.includes('setInterval(updateProgress, 500)'));
+assert('Has mode support', popupJsContent.includes('MODE_FLAGS') && popupJsContent.includes('setMode'));
+assert('Has RESUME action', popupJsContent.includes("action: 'RESUME'"));
+assert('Has progress polling 500ms', popupJsContent.includes(', 500)') && popupJsContent.includes('setInterval'));
 console.log();
 
 // ── Test 5: Manifest validation ──

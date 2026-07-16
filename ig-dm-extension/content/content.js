@@ -7,6 +7,7 @@
 
 // ── Global state ──
 var _stopFlag = false;
+var _running = false;   // guard against concurrent START / double-run
 var _config = null;
 var _pendingConvs = null;
 var _resolvePending = null;
@@ -62,11 +63,31 @@ async function clearSession() {
 // ── Message listener: commands from popup ──
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (msg.action === 'START') {
+    if (_running) { sendResponse({ alreadyRunning: true }); return false; }
     _stopFlag = false;
+    _running = true;
     igDmSender().then(function (result) {
+      _running = false;
       sendResponse(result || { sent: 0, failed: 0 });
     }).catch(function (e) {
+      _running = false;
       sendResponse({ sent: 0, failed: 0, error: e.message });
+    });
+    return true;
+  }
+  if (msg.action === 'RESUME') {
+    // Resume from a saved session without re-scanning.
+    if (_running) { sendResponse({ alreadyRunning: true }); return false; }
+    _stopFlag = false;
+    _running = true;
+    loadConfig().then(function () {
+      return igDmSender.confirm();
+    }).then(function (r) {
+      _running = false;
+      sendResponse(r || { resumed: true });
+    }).catch(function (e) {
+      _running = false;
+      sendResponse({ error: e.message });
     });
     return true;
   }
@@ -770,7 +791,8 @@ igDmSender.confirm = async function () {
   for (var i = startIndex; i < targetConvs.length; i++) {
     if (_stopFlag) {
       log('⏹ STOP detectado. Finalizando después de ' + sent + ' enviados.', 'warn');
-      await clearSession();
+      // Keep the session so the user can RESUME later — only Iniciar (fresh) clears it.
+      _running = false;
       await saveProgress({
         status: 'stopped',
         total: targetConvs.length,
@@ -809,6 +831,8 @@ igDmSender.confirm = async function () {
     var popup = checkForPopups();
     if (popup === 'captcha') {
       log(progress + ' ⚠ CAPTCHA/Challenge detectado. Pausando.', 'error');
+      // Keep session (resume-able). Release the running lock so RESUME can re-enter.
+      _running = false;
       await saveProgress({
         status: 'paused',
         total: targetConvs.length,
@@ -898,6 +922,7 @@ igDmSender.confirm = async function () {
   }
   log('\nHecho. ' + sent + ' mensajes enviados.', 'header');
 
+  _running = false;
   await clearSession();
   await saveProgress({
     status: 'done',
@@ -922,6 +947,11 @@ igDmSender.confirm = async function () {
 // ============================================================
 // AUTO-RECOVERY ON PAGE LOAD
 // ============================================================
+// ============================================================
+// AUTO-RECOVERY ON PAGE LOAD
+// Only auto-resumes if the page was reloaded mid-run. If the user
+// explicitly STOPPED, leave it stopped so they can resume manually.
+// ============================================================
 (async function autoRecover() {
   await sleep(3000);
 
@@ -929,15 +959,32 @@ igDmSender.confirm = async function () {
     await loadConfig();
 
     var session = await loadSession();
-    if (session && session.conversations && session.conversations.length > 0) {
-      console.log('%c[IG-DM] 🔄 Sesión pendiente detectada. Auto-reanudando en 5s...', 'color:#4CAF50;font-weight:bold');
-      console.log('%c[IG-DM] Para CANCELAR, abre el popup y haz clic en Detener', 'color:#FF9800;font-weight:bold');
-      await sleep(5000);
-      if (!_stopFlag) {
-        igDmSender.confirm();
-      }
-    } else {
-      console.log('%c[IG-DM] ✅ Extensión cargada. Abre el popup para configurar y haz clic en Iniciar.', 'color:#4CAF50');
+    if (!session || !session.conversations || session.conversations.length === 0) {
+      console.log('%c[IG-DM] ✅ Extensión cargada. Abre el popup y haz clic en Iniciar.', 'color:#4CAF50');
+      return;
+    }
+
+    // Check the last known status before the reload
+    var progData = await chrome.storage.local.get('igDmProgress');
+    var lastStatus = (progData.igDmProgress && progData.igDmProgress.status) || 'idle';
+
+    if (lastStatus === 'stopped') {
+      console.log('%c[IG-DM] ⏹ Sesión detenida previamente. Usa “Reanudar” en el popup para continuar.', 'color:#FF9800;font-weight:bold');
+      return; // intentional stop — do not auto-resume
+    }
+
+    // Mid-run reload (crash / Instagram refreshed the page) → auto-resume
+    if (lastStatus === 'paused') {
+      console.log('%c[IG-DM] ⚠ CAPTCHA pendiente. Resuélvelo y usa “Reanudar” en el popup.', 'color:#FF9800;font-weight:bold');
+      return; // wait for user, don't auto-resume into a captcha
+    }
+
+    console.log('%c[IG-DM] 🔄 Sesión pendiente detectada. Auto-reanudando en 5s...', 'color:#4CAF50;font-weight:bold');
+    console.log('%c[IG-DM] Para CANCELAR, abre el popup y haz clic en Detener', 'color:#FF9800;font-weight:bold');
+    await sleep(5000);
+    if (!_stopFlag) {
+      _running = true;
+      igDmSender.confirm().then(function () { _running = false; }).catch(function () { _running = false; });
     }
   } catch (e) {
     console.log('[IG-DM] Error en autoRecover:', e.message);
