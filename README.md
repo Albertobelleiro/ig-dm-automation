@@ -1,68 +1,126 @@
-# Instagram DM Automation
+# IG DM Automator — Chrome Extension v2.0
 
-Scripts de automatización de DMs para Instagram web. Pensados para RRPP de discotecas que necesitan enviar el mismo mensaje promocional a muchos contactos.
+Extensión de Chrome (Manifest V3) para automatizar el envío de mensajes directos en Instagram. Configura el mensaje, delays, filtros y controla el progreso desde un popup UI.
 
-## Scripts
+**No requiere pegar scripts en consola.** La extensión se inyecta automáticamente en `instagram.com/direct/*`.
 
-| Archivo | Descripción |
-|---|---|
-| `scripts/ig-dm-prueba.js` | Modo prueba (dry-run). Escribe pero NO envía. Máximo 50. |
-| `scripts/ig-dm-oficial.js` | Modo real. Envía mensajes de verdad. Máximo 1500. |
-| `scripts/ig-dm-personalized.js` | Mensaje personalizado con `{nombre}` del contacto. |
+## Características
 
-## Cómo usar
+- **Popup UI** — configura mensaje, delays, filtros, modo dry-run, personalización con `{nombre}`
+- **Auto-inyección** — el script se carga automáticamente al abrir Instagram Direct
+- **Progreso en tiempo real** — enviados, fallidos, progreso %, destinatario actual
+- **Recovery** — si la página se recarga, la extensión reanuda automáticamente desde donde iba
+- **Personalización** — placeholder `{nombre}` extrae el primer nombre del contacto
+- **3 modos:** dry-run (no envía), real, personalizado
+- **Seguridad:** delay aleatorio, detección de CAPTCHA, límite de mensajes, filtro de grupos
 
-1. Ve a `https://www.instagram.com/direct/`
-2. Abre la consola del navegador (F12 → Console)
-3. Si es la primera vez, escribe `allow pasting` cuando te lo pida
-4. Pega el contenido del script que quieras usar
-5. Pulsa Enter
-6. Ejecuta `igDmSender()` para cargar y filtrar conversaciones
-7. Ejecuta `igDmSender.confirm()` para empezar a enviar
-8. Para parar: `stopIGDM()`
+## Instalación
 
-## Configuración
+1. Clona este repo o descarga los archivos
+2. Ve a `chrome://extensions/`
+3. Activa "Modo desarrollador" (arriba a la derecha)
+4. Haz clic en "Cargar descomprimida"
+5. Selecciona la carpeta `ig-dm-extension/`
+6. La extensión aparecerá en la toolbar
 
-Edita `IG_DM_CONFIG` al principio del script antes de pegarlo:
+## Uso
 
-```javascript
-const IG_DM_CONFIG = {
-  mensaje: "tu mensaje aquí",
-  delayMin: 4000,        // delay mínimo entre mensajes (ms)
-  delayMax: 6000,        // delay máximo entre mensajes (ms)
-  maxMensajes: 1500,     // límite de seguridad
-  iniciarDesde: 0,       // reanudar desde posición N
-  semanasAtras: 3,       // filtrar conversaciones de últimas N semanas
-  saltarGrupos: true,    // no enviar a chats grupales
-  dryRun: false,         // true = no envía (modo prueba)
-  maxScrolls: 100,       // scrolls para cargar conversaciones
-};
-```
+1. Abre `https://www.instagram.com/direct/`
+2. Haz clic en el icono de la extensión en la toolbar 🔥
+3. Configura el mensaje, delays, filtros en el popup
+4. Haz clic en **▶ Iniciar**
+5. El progreso se actualiza en tiempo real en el popup
+6. Para parar: **⏹ Detener**
 
-## Script personalizado
+### Placeholder `{nombre}`
 
-Usa `{nombre}` como placeholder. El script extrae el primer nombre de cada contacto:
+Activa "Personalizado" en el popup. La extensión extrae el primer nombre de cada contacto:
 
 - `"Carlos García"` → `"Carlos"`
 - `"carlos_garcia"` → `"Carlos"`
 - `"María López"` → `"María"`
 
-Ejemplo: `¡Hey {nombre}! 👋 Este viernes...` → `¡Hey Carlos! 👋 Este viernes...`
+### Dry Run
 
-## Safety
+Activa "🧪 Dry run" para probar sin enviar. Los mensajes se escriben pero no se envían.
 
-- Delay aleatorio de 4-6s entre mensajes
-- Confirmación antes de empezar (`igDmSender()` → `igDmSender.confirm()`)
-- `stopIGDM()` para parar cuando quieras
-- Detección de CAPTCHA/challenge → pausa y avisa
-- Salta chats grupales automáticamente
-- Filtra notas de Instagram (no las confunde con conversaciones)
-- Retry automático si falla un envío
-- Resumen final con enviados/fallidos/errores
+## Arquitectura
+
+```
+ig-dm-extension/
+├── manifest.json              # MV3: permisos, content_scripts, action popup
+├── background/
+│   └── service-worker.js      # Inicialización en install
+├── content/
+│   └── content.js             # Motor DM completo (~945 líneas)
+├── popup/
+│   ├── popup.html             # UI del popup
+│   ├── popup.css              # Dark theme, gradientes, animaciones
+│   └── popup.js               # Lógica: formulario, Start/Stop, polling
+├── core/
+│   ├── defaults.js            # Configuración por defecto
+│   └── storage.js             # Wrappers de chrome.storage.local
+├── icons/
+│   ├── icon16.png
+│   ├── icon48.png
+│   └── icon128.png
+└── tests/
+    └── test-schema.js         # Tests de esquema e inventario (73/73)
+```
+
+### Flujo de datos
+
+```
+Popup UI ←→ chrome.storage.local (config + progress)
+Popup UI → Content Script (START/STOP via chrome.tabs.sendMessage)
+Content Script → chrome.storage.local (progress updates)
+Content Script → Popup (runtime.sendMessage para notificaciones)
+```
+
+## Configuración
+
+| Parámetro | Default | Descripción |
+|---|---|---|
+| `message` | (mensaje promocional) | Texto a enviar. Soporta `{nombre}` |
+| `personalized` | `false` | Activar placeholder `{nombre}` |
+| `delayMin` | `4000` | Delay mínimo entre mensajes (ms) |
+| `delayMax` | `6000` | Delay máximo entre mensajes (ms) |
+| `maxMessages` | `1500` | Límite de seguridad |
+| `weeksBack` | `3` | Solo conversaciones de últimas N semanas |
+| `skipGroups` | `true` | No enviar a chats grupales |
+| `dryRun` | `false` | Escribir pero no enviar |
+| `maxScrolls` | `100` | Máximo de scrolls para cargar conversaciones |
 
 ## Tests
 
 ```bash
-node tests/test-ig-dm-logic.js      # Tests de lógica (timestamps, nombres, filtrado)
-node tests/test-integration.js      # Tests de integración con jsdom
+# Tests de esquema y estructura
+node ig-dm-extension/tests/test-schema.js
+
+# Tests de lógica (timestamps, nombres, filtrado)
+node tests/test-ig-dm-logic.js
+
+# Tests de auto-recovery
+node tests/test-auto-recovery.js
 ```
+
+## Changelog
+
+### v2.0
+- Popup UI con dark theme y gradientes
+- Auto-inyección del script (sin pegar en consola)
+- Progreso en tiempo real
+- Configuración persistente en chrome.storage
+- Recovery automático tras recarga
+- Soporte para `{nombre}` integrado
+- Service worker para inicialización
+- Sin dependencias externas
+
+### v1.1
+- Fix: `eval()` bloqueado por CSP en MV3 → inyección vía `<script>` tag
+- Recovery añadido al script personalizado
+- DOM marker anti-doble-inyección
+
+### v1.0
+- Extensión básica de auto-recovery
+- 3 scripts independientes (prueba, oficial, personalizado)
