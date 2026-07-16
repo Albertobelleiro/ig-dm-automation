@@ -1,11 +1,18 @@
 {
   "manifest_version": 3,
   "name": "IG DM Auto-Recovery",
-  "version": "1.0",
-  "description": "Auto-reinjects the IG DM script after page reload",
+  "version": "1.1",
+  "description": "Auto-reinjects Instagram DM automation scripts after page reload. Works with ig-dm-oficial.js, ig-dm-prueba.js, and ig-dm-personalized.js.",
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://instagram.com/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["https://www.instagram.com/direct/*", "https://instagram.com/direct/*"],
+      "matches": [
+        "https://www.instagram.com/direct/*",
+        "https://instagram.com/direct/*"
+      ],
       "js": ["content.js"],
       "run_at": "document_idle"
     }

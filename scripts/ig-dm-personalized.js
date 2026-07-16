@@ -30,8 +30,45 @@ https://chat.whatsapp.com/K6nVfphXdVr5o9DAZInWYu?mode=gi_t`,
 window._igDmStop = false;
 window.stopIGDM = function () {
   window._igDmStop = true;
+  sessionStorage.removeItem('igDmSession');
+  sessionStorage.removeItem('igDmScript');
+  window.onbeforeunload = null;
   console.log('%c[IG-DM] STOP solicitado. Terminará después del mensaje actual.', 'color:#FF9800;font-weight:bold');
 };
+
+// === PREVENT PAGE RELOAD ===
+window.onbeforeunload = function () {
+  if (!window._igDmStop) {
+    return 'El script de DMs está corriendo. ¿Seguro que quieres salir?';
+  }
+};
+
+// === SAVE SCRIPT TO SESSION STORAGE FOR AUTO-RECOVERY ===
+try {
+  var _scriptSource = '';
+  var _funcs = ['sleep', 'randomDelay', 'log', 'waitForElement', 'parseTimestampToDays', 'extractName', 'getFirstName', 'capitalize', 'findConversationItems', 'extractConvInfo', 'scrollConversationList', 'writeMessage', 'sendMessage', 'checkForPopups', 'saveSession', 'loadSession', 'clearSession', 'igDmSender'];
+  _scriptSource += 'var IG_DM_CONFIG = ' + JSON.stringify(IG_DM_CONFIG) + ';\n';
+  _scriptSource += 'window._igDmStop = false;\n';
+  _scriptSource += 'window.stopIGDM = ' + stopIGDM.toString() + ';\n';
+  _scriptSource += 'window.onbeforeunload = ' + (window.onbeforeunload ? window.onbeforeunload.toString() : 'null') + ';\n';
+  for (var i = 0; i < _funcs.length; i++) {
+    try {
+      var fn = eval(_funcs[i]);
+      if (typeof fn === 'function') {
+        _scriptSource += 'var ' + _funcs[i] + ' = ' + fn.toString() + ';\n';
+      }
+    } catch (e) {}
+  }
+  if (typeof igDmSender !== 'undefined' && igDmSender.confirm) {
+    _scriptSource += 'igDmSender.confirm = ' + igDmSender.confirm.toString() + ';\n';
+  }
+  _scriptSource += '\n// Auto-resume\n';
+  _scriptSource += '(async function autoResume() { await sleep(3000); var session = loadSession(); if (session) { console.log("%c[IG-DM] Sesion pendiente. Auto-reanudando...", "color:#4CAF50;font-weight:bold"); await sleep(5000); if (!window._igDmStop) { igDmSender.confirm(); } } })();\n';
+  sessionStorage.setItem('igDmScript', _scriptSource);
+  console.log('%c[IG-DM] Script guardado en sessionStorage. La extension lo auto-inyectara tras una recarga.', 'color:#4CAF50');
+} catch (e) {
+  console.log('[IG-DM] No se pudo guardar el script:', e.message);
+}
 
 // === UTILS ===
 function sleep(ms) {
@@ -390,6 +427,28 @@ function checkForPopups() {
   return null;
 }
 
+// === SESSION PERSISTENCE ===
+function saveSession(targetConvs, currentIndex, sent, failed, errors) {
+  sessionStorage.setItem('igDmSession', JSON.stringify({
+    conversations: targetConvs,
+    currentIndex: currentIndex,
+    sent: sent,
+    failed: failed,
+    errors: errors,
+    timestamp: Date.now(),
+  }));
+}
+
+function loadSession() {
+  var data = sessionStorage.getItem('igDmSession');
+  if (!data) return null;
+  try { return JSON.parse(data); } catch (e) { return null; }
+}
+
+function clearSession() {
+  sessionStorage.removeItem('igDmSession');
+}
+
 // === MAIN FUNCTION ===
 async function igDmSender() {
   window._igDmStop = false;
@@ -464,20 +523,35 @@ async function igDmSender() {
 
 // === CONFIRM AND RUN ===
 igDmSender.confirm = async function () {
-  const targetConvs = window._igDmPending;
-  if (!targetConvs) {
-    console.log('%c[IG-DM] No hay envío pendiente. Ejecuta igDmSender() primero.', 'color:#f44336');
-    return;
+  var existingSession = loadSession();
+  var targetConvs, startIndex, sent, failed, errors;
+
+  if (existingSession && !window._igDmPending) {
+    log('%c🔄 SESIÓN RECUPERADA — reanudando tras recarga de página', 'color:#4CAF50;font-weight:bold');
+    targetConvs = existingSession.conversations;
+    startIndex = existingSession.currentIndex;
+    sent = existingSession.sent;
+    failed = existingSession.failed;
+    errors = existingSession.errors || [];
+    log('  Reanudando desde ' + (startIndex + 1) + '/' + targetConvs.length, 'info');
+    log('  Enviados hasta ahora: ' + sent + ', Fallidos: ' + failed, 'info');
+  } else {
+    targetConvs = window._igDmPending;
+    if (!targetConvs) {
+      console.log('%c[IG-DM] No hay envío pendiente. Ejecuta igDmSender() primero.', 'color:#f44336');
+      return;
+    }
+    startIndex = 0;
+    sent = 0;
+    failed = 0;
+    errors = [];
   }
+
+  var skipped = 0;
 
   log('\n[INICIO] Enviando mensajes personalizados...', 'header');
 
-  let sent = 0;
-  let failed = 0;
-  let skipped = 0;
-  const errors = [];
-
-  for (let i = 0; i < targetConvs.length; i++) {
+  for (var i = startIndex; i < targetConvs.length; i++) {
     if (window._igDmStop) {
       log(`STOP detectado. Finalizando después de ${sent} mensajes enviados.`, 'warn');
       break;
@@ -486,12 +560,16 @@ igDmSender.confirm = async function () {
     const conv = targetConvs[i];
     const progress = `[${i + 1}/${targetConvs.length}]`;
 
+    // Persist progress after each message (so recovery can resume)
+    saveSession(targetConvs, i, sent, failed, errors);
+
     // Personalize message
     const personalizedMsg = IG_DM_CONFIG.mensaje.replace(/\{nombre\}/g, conv.firstName);
 
     const popup = checkForPopups();
     if (popup === 'captcha') {
       log(`${progress} CAPTCHA/Challenge detectado. Pausando. Resuelve y ejecuta igDmSender.confirm() de nuevo.`, 'error');
+      saveSession(targetConvs, i, sent, failed, errors);
       window._igDmPending = targetConvs.slice(i);
       return;
     }
@@ -573,12 +651,27 @@ igDmSender.confirm = async function () {
   }
   log(`\nHecho. ${sent} mensajes personalizados enviados.`, 'header');
 
+  clearSession();
   window._igDmPending = null;
   if (window._igDmResolve) {
     window._igDmResolve({ sent, failed, skipped, errors });
     window._igDmResolve = null;
   }
 };
+
+// === AUTO-RESUME CHECK ===
+(async function autoResume() {
+  await sleep(3000);
+  var session = loadSession();
+  if (session) {
+    console.log('%c[IG-DM] Sesión pendiente detectada. Auto-reanudando en 5 segundos...', 'color:#4CAF50;font-weight:bold');
+    console.log('%c[IG-DM] Para CANCELAR, ejecuta: stopIGDM()', 'color:#FF9800;font-weight:bold');
+    await sleep(5000);
+    if (!window._igDmStop) {
+      igDmSender.confirm();
+    }
+  }
+})();
 
 console.log('%c╔══════════════════════════════════════════════════════╗', 'color:#fff');
 console.log('%c║  INSTAGRAM DM AUTOMATION - PERSONALIZED WITH NAME   ║', 'color:#fff;font-weight:bold;font-size:13px');

@@ -1,256 +1,204 @@
-// Test auto-recovery system: sessionStorage persistence + extension re-injection
-const { JSDOM } = require('jsdom');
-
-const dom = new JSDOM('<!DOCTYPE html><html><body></body></html>', {
-  url: 'https://www.instagram.com/direct/inbox/',
-  runScripts: 'dangerously',
-  pretendToBeVisual: true,
-});
-
-const { window } = dom;
-const { document } = window;
-
-// Polyfills
-window.sessionStorage = {
-  _data: {},
-  getItem(k) { return this._data[k] || null; },
-  setItem(k, v) { this._data[k] = String(v); },
-  removeItem(k) { delete this._data[k]; },
-  clear() { this._data = {}; },
-};
-window.onbeforeunload = null;
-window.getComputedStyle = () => ({ overflowY: 'hidden', overflowX: 'hidden', opacity: '1' });
-window.innerHeight = 800;
-window.innerWidth = 1200;
+// Test auto-recovery system v1.1: session persistence + extension validation
+// Key change: content.js now uses <script> tag injection instead of eval()
+// Key change: personalized script now has save/recovery mechanism
+const fs = require('fs');
 
 let pass = 0, fail = 0;
 function assert(name, condition, details) {
   if (condition) {
-    console.log(`  ✓ ${name}`);
+    console.log('  ✓ ' + name);
     pass++;
   } else {
-    console.log(`  ✗ ${name} — ${details || ''}`);
+    console.log('  ✗ ' + name + ' — ' + (details || ''));
     fail++;
   }
 }
 
-console.log('=== TEST: Auto-Recovery System ===\n');
+console.log('=== TEST: Auto-Recovery System v1.1 ===\n');
 
 // ============================================================
-// TEST 1: Session save/load/clear
+// TEST 1: Session save/load/clear (pure logic, no DOM needed)
 // ============================================================
-console.log('Test 1: Session persistence (save/load/clear)');
+console.log('Test 1: Session persistence (pure logic)');
 
-// Simulate saveSession
+// In-memory storage to simulate sessionStorage
+var storage = {};
+
 function saveSession(targetConvs, currentIndex, sent, failed, errors) {
-  window.sessionStorage.setItem('igDmSession', JSON.stringify({
+  storage['igDmSession'] = JSON.stringify({
     conversations: targetConvs,
     currentIndex: currentIndex,
     sent: sent,
     failed: failed,
     errors: errors,
     timestamp: Date.now(),
-  }));
+  });
 }
 
 function loadSession() {
-  const data = window.sessionStorage.getItem('igDmSession');
+  var data = storage['igDmSession'];
   if (!data) return null;
   try { return JSON.parse(data); } catch (e) { return null; }
 }
 
 function clearSession() {
-  window.sessionStorage.removeItem('igDmSession');
+  delete storage['igDmSession'];
 }
 
-const testConvs = [
-  { name: 'user1', timestamp: '5m', timeDays: 0, isGroup: false },
-  { name: 'user2', timestamp: '2 d', timeDays: 2, isGroup: false },
-  { name: 'user3', timestamp: '1 sem', timeDays: 7, isGroup: false },
+var testConvs = [
+  { name: 'user1', firstName: 'User1', timestamp: '5m', timeDays: 0, isGroup: false },
+  { name: 'user2', firstName: 'User2', timestamp: '2 d', timeDays: 2, isGroup: false },
 ];
 
 saveSession(testConvs, 5, 3, 2, [{ name: 'user0', error: 'Not found' }]);
-const loaded = loadSession();
+var loaded = loadSession();
 assert('Session saved and loaded', loaded !== null);
-assert('currentIndex correct', loaded.currentIndex === 5, `got ${loaded.currentIndex}`);
-assert('sent correct', loaded.sent === 3, `got ${loaded.sent}`);
-assert('failed correct', loaded.failed === 2, `got ${loaded.failed}`);
-assert('conversations count correct', loaded.conversations.length === 3, `got ${loaded.conversations.length}`);
-assert('errors preserved', loaded.errors.length === 1, `got ${loaded.errors.length}`);
+assert('currentIndex: 5', loaded.currentIndex === 5, 'got ' + loaded.currentIndex);
+assert('sent: 3', loaded.sent === 3, 'got ' + loaded.sent);
+assert('failed: 2', loaded.failed === 2, 'got ' + loaded.failed);
+assert('2 conversations', loaded.conversations.length === 2, 'got ' + loaded.conversations.length);
+assert('1 error preserved', loaded.errors.length === 1, 'got ' + loaded.errors.length);
 
 clearSession();
-const afterClear = loadSession();
-assert('Session cleared', afterClear === null);
+assert('Session cleared', loadSession() === null);
+
+// Re-save and verify resume scenario
+saveSession(testConvs, 1, 1, 0, []);
+var resume = loadSession();
+assert('Resume: index 1', resume.currentIndex === 1);
+assert('Resume: next conv is user2', resume.conversations[1].name === 'user2');
 console.log();
 
 // ============================================================
-// TEST 2: Script source saved to sessionStorage
+// TEST 2: content.js must NOT use eval() (MV3 CSP compliance)
 // ============================================================
-console.log('Test 2: Script source saved to sessionStorage');
+console.log('Test 2: content.js CSP compliance (no eval)');
 
-// Simulate what the script does when it saves itself
-const fakeConfig = { mensaje: 'test', delayMin: 4000, delayMax: 6000, maxMensajes: 50 };
-const fakeStopFunc = function() { window._igDmStop = true; sessionStorage.removeItem('igDmSession'); };
-
-var _scriptSource = '';
-_scriptSource += 'var IG_DM_CONFIG = ' + JSON.stringify(fakeConfig) + ';\n';
-_scriptSource += 'window._igDmStop = false;\n';
-_scriptSource += 'window.stopIGDM = ' + fakeStopFunc.toString() + ';\n';
-_scriptSource += 'var testFunc = function() { return 42; };\n';
-_scriptSource += '\n// Auto-resume\n';
-_scriptSource += '(async function autoResume() { console.log("auto-resume triggered"); })();\n';
-
-window.sessionStorage.setItem('igDmScript', _scriptSource);
-const savedScript = window.sessionStorage.getItem('igDmScript');
-assert('Script saved to sessionStorage', savedScript !== null && savedScript.length > 50);
-assert('Script contains IG_DM_CONFIG', savedScript.includes('IG_DM_CONFIG'));
-assert('Script contains stopIGDM', savedScript.includes('stopIGDM'));
-assert('Script contains autoResume', savedScript.includes('autoResume'));
-assert('Script contains testFunc', savedScript.includes('testFunc'));
+var contentJs = fs.readFileSync('/Volumes/SSD/malalts/ig-dm-extension/content.js', 'utf-8');
+// Strip comments before checking for eval (comments mention eval() as context)
+var codeNoComments = contentJs.replace(/\/\/.*$|\/\*[\s\S]*?\*\//gm, '');
+var hasEval = /\beval\s*\(/.test(codeNoComments);
+assert('content.js does NOT use eval()', !hasEval, 'eval() is blocked by MV3 CSP');
+assert('content.js uses createElement("script")', contentJs.includes("createElement('script')"));
+assert('content.js uses textContent', contentJs.includes('textContent'));
+assert('content.js reads from sessionStorage', contentJs.includes("sessionStorage.getItem('igDmScript')"));
+assert('content.js has recovery marker', contentJs.includes('__ig_dm_recovery_marker'));
+assert('content.js has setTimeout', contentJs.includes('setTimeout'));
+assert('content.js has SPA navigation handler', contentJs.includes('setInterval') && contentJs.includes('location.href'));
 console.log();
 
 // ============================================================
-// TEST 3: Extension content.js can read and eval the script
+// TEST 3: manifest.json validation
 // ============================================================
-console.log('Test 3: Extension re-injection simulation');
+console.log('Test 3: manifest.json validation');
 
-// Simulate what the extension's content.js does
-const extensionCode = window.sessionStorage.getItem('igDmScript');
-let extensionLoaded = false;
-try {
-  // Eval in the window context
-  window.eval(extensionCode);
-  extensionLoaded = true;
-} catch (e) {
-  console.log('  Eval error:', e.message);
-}
-
-assert('Extension can eval saved script', extensionLoaded);
-assert('IG_DM_CONFIG exists after eval', typeof window.IG_DM_CONFIG !== 'undefined', `got ${typeof window.IG_DM_CONFIG}`);
-assert('stopIGDM exists after eval', typeof window.stopIGDM === 'function', `got ${typeof window.stopIGDM}`);
-assert('testFunc returns 42', typeof window.testFunc === 'function' && window.testFunc() === 42, `got ${typeof window.testFunc}`);
+var manifest = JSON.parse(fs.readFileSync('/Volumes/SSD/malalts/ig-dm-extension/manifest.json', 'utf-8'));
+assert('manifest_version: 3', manifest.manifest_version === 3);
+assert('version >= 1.1', parseFloat(manifest.version) >= 1.1, 'got ' + manifest.version);
+assert('Has content_scripts', Array.isArray(manifest.content_scripts));
+assert('Matches instagram.com/direct', manifest.content_scripts[0].matches.some(function (m) { return m.includes('instagram.com/direct'); }));
+assert('Has content.js in js array', manifest.content_scripts[0].js.includes('content.js'));
+assert('run_at: document_idle', manifest.content_scripts[0].run_at === 'document_idle');
+assert('Has host_permissions', Array.isArray(manifest.host_permissions));
 console.log();
 
 // ============================================================
-// TEST 4: beforeunload prevention
+// TEST 4: Personalized script has recovery mechanism
 // ============================================================
-console.log('Test 4: beforeunload prevention');
+console.log('Test 4: Personalized script recovery');
 
-window._igDmStop = false;
-window.onbeforeunload = function () {
-  if (!window._igDmStop) {
-    return 'El script de DMs está corriendo. ¿Seguro que quieres salir?';
-  }
-};
-
-// When script is running, beforeunload should return a string
-const resultRunning = window.onbeforeunload();
-assert('beforeunload returns message when running', typeof resultRunning === 'string', `got ${typeof resultRunning}`);
-
-// When stopped, beforeunload should return undefined
-window._igDmStop = true;
-const resultStopped = window.onbeforeunload();
-assert('beforeunload returns undefined when stopped', resultStopped === undefined, `got ${resultStopped}`);
+var personalized = fs.readFileSync('/Volumes/SSD/malalts/scripts/ig-dm-personalized.js', 'utf-8');
+assert('Has saveSession', personalized.includes('function saveSession'));
+assert('Has loadSession', personalized.includes('function loadSession'));
+assert('Has clearSession', personalized.includes('function clearSession'));
+assert('Saves script to sessionStorage', personalized.includes("setItem('igDmScript'"));
+assert('Saves session to sessionStorage', personalized.includes("setItem('igDmSession'"));
+assert('Has onbeforeunload', personalized.includes('window.onbeforeunload'));
+assert('Has auto-resume check', personalized.includes('autoResume'));
+assert('Confirm handles existingSession', personalized.includes('existingSession'));
+assert('Saves progress in loop', personalized.includes('saveSession(targetConvs, i, sent, failed, errors)'));
+assert('stopIGDM clears sessionStorage', personalized.includes("removeItem('igDmSession')"));
 console.log();
 
 // ============================================================
-// TEST 5: Full recovery flow simulation
+// TEST 5: Oficial script has recovery mechanism
 // ============================================================
-console.log('Test 5: Full recovery flow');
+console.log('Test 5: Oficial script recovery');
 
-// Step 1: Script is running, saves session
-window.sessionStorage.clear();
-window._igDmStop = false;
+var oficial = fs.readFileSync('/Volumes/SSD/malalts/scripts/ig-dm-oficial.js', 'utf-8');
+assert('Has saveSession', oficial.includes('function saveSession'));
+assert('Has loadSession', oficial.includes('function loadSession'));
+assert('Saves script to sessionStorage', oficial.includes("setItem('igDmScript'"));
+assert('Has beforeunload', oficial.includes('window.onbeforeunload'));
+assert('Has auto-resume', oficial.includes('autoResume'));
+assert('Confirm handles existingSession', oficial.includes('existingSession'));
+console.log();
 
-const convs = [
-  { name: 'alice', timestamp: '1h', timeDays: 0, isGroup: false },
-  { name: 'bob', timestamp: '2d', timeDays: 2, isGroup: false },
-  { name: 'charlie', timestamp: '5d', timeDays: 5, isGroup: false },
+// ============================================================
+// TEST 6: Prueba script has recovery mechanism
+// ============================================================
+console.log('Test 6: Prueba script recovery');
+
+var prueba = fs.readFileSync('/Volumes/SSD/malalts/scripts/ig-dm-prueba.js', 'utf-8');
+assert('Has saveSession', prueba.includes('function saveSession'));
+assert('Has loadSession', prueba.includes('function loadSession'));
+assert('Saves script to sessionStorage', prueba.includes("setItem('igDmScript'"));
+assert('Has beforeunload', prueba.includes('window.onbeforeunload'));
+console.log();
+
+// ============================================================
+// TEST 7: stopIGDM clears all state (verify in all 3 scripts)
+// ============================================================
+console.log('Test 7: stopIGDM clears state in all scripts');
+
+var scripts = [
+  { name: 'oficial', content: oficial },
+  { name: 'personalized', content: personalized },
+  { name: 'prueba', content: prueba },
 ];
 
-// Save session at index 1 (already sent to alice)
-saveSession(convs, 1, 1, 0, []);
-
-// Save script source
-window.sessionStorage.setItem('igDmScript', 'var recovered = true; console.log("recovered");');
-
-// Step 2: Simulate page reload — sessionStorage persists
-// Extension content.js runs:
-const recoveredScript = window.sessionStorage.getItem('igDmScript');
-assert('Script survives in sessionStorage after "reload"', recoveredScript !== null);
-
-// Extension evals it:
-window.eval(recoveredScript);
-assert('Script re-injected after reload', typeof window.recovered !== 'undefined' && window.recovered === true, `got ${typeof window.recovered}`);
-
-// Step 3: Auto-resume detects session
-const recoveredSession = loadSession();
-assert('Session survives after "reload"', recoveredSession !== null);
-assert('Resume index correct', recoveredSession.currentIndex === 1, `got ${recoveredSession.currentIndex}`);
-assert('Resume sent count correct', recoveredSession.sent === 1, `got ${recoveredSession.sent}`);
-assert('Resume conversations count correct', recoveredSession.conversations.length === 3, `got ${recoveredSession.conversations.length}`);
-assert('Resume next conversation is bob', recoveredSession.conversations[1].name === 'bob', `got ${recoveredSession.conversations[1]?.name}`);
+scripts.forEach(function (s) {
+  var hasRemoveSession = s.content.includes("removeItem('igDmSession')") || s.content.includes('removeItem("igDmSession")');
+  var hasRemoveScript = s.content.includes("removeItem('igDmScript')") || s.content.includes('removeItem("igDmScript")');
+  assert(s.name + ': removes igDmSession in stop', hasRemoveSession);
+  assert(s.name + ': removes igDmScript in stop', hasRemoveScript);
+});
 console.log();
 
 // ============================================================
-// TEST 6: stopIGDM clears everything
+// TEST 8: Recovery key consistency across all files
 // ============================================================
-console.log('Test 6: stopIGDM clears all state');
+console.log('Test 8: Key name consistency');
 
-window._igDmStop = false;
-saveSession(convs, 0, 0, 0, []);
-window.sessionStorage.setItem('igDmScript', 'test script');
+var KEY = 'igDmScript';
+var SESSION_KEY = 'igDmSession';
 
-// Simulate stopIGDM
-window._igDmStop = true;
-window.sessionStorage.removeItem('igDmSession');
-window.sessionStorage.removeItem('igDmScript');
-window.onbeforeunload = null;
+// Check all files use the same keys
+var allFiles = {
+  'content.js': contentJs,
+  'ig-dm-oficial.js': oficial,
+  'ig-dm-personalized.js': personalized,
+  'ig-dm-prueba.js': prueba,
+};
 
-assert('Session cleared by stop', window.sessionStorage.getItem('igDmSession') === null);
-assert('Script cleared by stop', window.sessionStorage.getItem('igDmScript') === null);
-assert('beforeunload removed', window.onbeforeunload === null);
-assert('Stop flag set', window._igDmStop === true);
-console.log();
-
-// ============================================================
-// TEST 7: Extension manifest is valid
-// ============================================================
-console.log('Test 7: Extension manifest validation');
-
-const fs = require('fs');
-const manifestPath = '/Volumes/SSD/malalts/ig-dm-extension/manifest.json';
-const manifestExists = fs.existsSync(manifestPath);
-assert('manifest.json exists', manifestExists);
-
-if (manifestExists) {
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-  assert('manifest_version is 3', manifest.manifest_version === 3);
-  assert('Has name', manifest.name !== undefined);
-  assert('Has content_scripts', Array.isArray(manifest.content_scripts));
-  assert('Matches instagram.com/direct', manifest.content_scripts[0].matches.some(m => m.includes('instagram.com/direct')));
-  assert('Has content.js', manifest.content_scripts[0].js.includes('content.js'));
-  assert('run_at is document_idle', manifest.content_scripts[0].run_at === 'document_idle');
-}
-
-const contentJsPath = '/Volumes/SSD/malalts/ig-dm-extension/content.js';
-const contentJsExists = fs.existsSync(contentJsPath);
-assert('content.js exists', contentJsExists);
-
-if (contentJsExists) {
-  const contentJs = fs.readFileSync(contentJsPath, 'utf-8');
-  assert('content.js reads igDmScript from sessionStorage', contentJs.includes("sessionStorage.getItem('igDmScript')"));
-  assert('content.js uses eval', contentJs.includes('eval'));
-  assert('content.js has setTimeout', contentJs.includes('setTimeout'));
-  assert('content.js checks script length', contentJs.includes('length > 100'));
-}
+Object.keys(allFiles).forEach(function (filename) {
+  var file = allFiles[filename];
+  // Check the save key is consistent (all files must use 'igDmScript')
+  var usesScriptKey = file.includes("'" + KEY + "'") || file.includes('"' + KEY + '"');
+  assert(filename + ': uses key "' + KEY + '"', usesScriptKey);
+  // Session key is only used by the DM scripts, not content.js
+  if (filename !== 'content.js') {
+    var usesSessionKey = file.includes("'" + SESSION_KEY + "'") || file.includes('"' + SESSION_KEY + '"');
+    assert(filename + ': uses key "' + SESSION_KEY + '"', usesSessionKey);
+  }
+});
 console.log();
 
 // ============================================================
 // SUMMARY
 // ============================================================
 console.log('═══════════════════════════════════════════');
-console.log(`  TESTS: ${pass} passed, ${fail} failed`);
+console.log('  TESTS: ' + pass + ' passed, ' + fail + ' failed');
 console.log('═══════════════════════════════════════════');
 
 process.exit(fail > 0 ? 1 : 0);
