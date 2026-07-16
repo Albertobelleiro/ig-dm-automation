@@ -7,89 +7,113 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
+  <div class="app">
     <!-- Header -->
-    <header class="header">
-      <h1 class="header-title">🔥 IG DM Automator</h1>
-      <span class="header-version">v2.0</span>
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-mark"></div>
+        <div class="brand-text">
+          <span class="brand-name">DM Automator</span>
+          <span class="brand-sub">Instagram Direct</span>
+        </div>
+      </div>
+      <span class="version">v2.0</span>
     </header>
 
-    <!-- Message Section -->
-    <section class="section">
-      <label class="label" for="message">📝 Mensaje</label>
-      <textarea id="message" class="textarea" rows="5" placeholder="Escribe tu mensaje aquí...&#10;&#10;Usa {nombre} para personalizar"></textarea>
-      <div class="checkbox-row">
-        <input type="checkbox" id="personalized">
-        <label for="personalized">Personalizado (<code>{nombre}</code>)</label>
+    <!-- Section: Mensaje -->
+    <section class="block">
+      <div class="block-head">
+        <span class="block-title">Mensaje</span>
+        <label class="switch">
+          <input type="checkbox" id="personalized">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">Personalizado <code>{nombre}</code></span>
+        </label>
       </div>
+      <textarea id="message" class="field-textarea" rows="6" placeholder="Escribe tu mensaje aquí…
+
+Usa {nombre} para personalizar"></textarea>
     </section>
 
-    <!-- Config Section -->
-    <section class="section">
-      <label class="label">⚙️ Configuración</label>
-      <div class="config-grid">
-        <div class="config-item">
-          <label for="delayMin">Delay min (ms)</label>
-          <input type="number" id="delayMin" class="input" min="500" max="30000" step="500" value="4000">
+    <!-- Section: Configuración -->
+    <section class="block">
+      <div class="block-head">
+        <span class="block-title">Configuración</span>
+      </div>
+
+      <div class="row-grid">
+        <div class="field">
+          <label for="delayMin">Delay mín.</label>
+          <div class="input-affix">
+            <input type="number" id="delayMin" min="500" max="30000" step="500" value="4000">
+            <span>ms</span>
+          </div>
         </div>
-        <div class="config-item">
-          <label for="delayMax">Delay max (ms)</label>
-          <input type="number" id="delayMax" class="input" min="500" max="30000" step="500" value="6000">
+        <div class="field">
+          <label for="delayMax">Delay máx.</label>
+          <div class="input-affix">
+            <input type="number" id="delayMax" min="500" max="30000" step="500" value="6000">
+            <span>ms</span>
+          </div>
         </div>
-        <div class="config-item">
-          <label for="maxMessages">Max mensajes</label>
-          <input type="number" id="maxMessages" class="input" min="1" max="5000" value="1500">
+        <div class="field">
+          <label for="maxMessages">Máx. mensajes</label>
+          <input type="number" id="maxMessages" min="1" max="5000" value="1500">
         </div>
-        <div class="config-item">
+        <div class="field">
           <label for="weeksBack">Semanas atrás</label>
-          <input type="number" id="weeksBack" class="input" min="1" max="52" value="3">
+          <input type="number" id="weeksBack" min="1" max="52" value="3">
         </div>
       </div>
-      <div class="checkbox-row">
-        <input type="checkbox" id="skipGroups" checked>
-        <label for="skipGroups">Saltar grupos</label>
-      </div>
-      <div class="checkbox-row">
-        <input type="checkbox" id="dryRun">
-        <label for="dryRun">🧪 Dry run (no enviar)</label>
+
+      <div class="toggles">
+        <label class="switch">
+          <input type="checkbox" id="skipGroups" checked>
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">Saltar grupos</span>
+        </label>
+        <label class="switch switch-warn">
+          <input type="checkbox" id="dryRun">
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+          <span class="switch-label">Dry run (no enviar)</span>
+        </label>
       </div>
     </section>
 
-    <!-- Progress Section -->
-    <section class="section" id="progressSection">
-      <label class="label">📊 Progreso</label>
-      <div class="progress-card">
-        <div class="status-row">
+    <!-- Section: Estado -->
+    <section class="block" id="progressSection">
+      <div class="block-head">
+        <span class="block-title">Estado</span>
+        <span class="status-pill idle" id="statusPill">
           <span class="status-dot idle" id="statusDot"></span>
-          <span class="status-text" id="statusText">● Listo</span>
-        </div>
-        <div class="progress-info">
+          <span class="status-text" id="statusText">Listo</span>
+        </span>
+      </div>
+
+      <div class="progress">
+        <div class="progress-top">
           <span id="progressFraction">0/0</span>
-          <span id="progressPercent">(0%)</span>
+          <span class="progress-pct" id="progressPercent">0%</span>
         </div>
         <div class="progress-bar">
           <div class="progress-fill" id="progressFill" style="width: 0%"></div>
         </div>
         <div class="progress-stats">
-          <span>✅ <span id="sentCount">0</span></span>
-          <span>❌ <span id="failedCount">0</span></span>
-        </div>
-        <div class="current-recipient" id="currentRecipient" style="display:none">
-          <span>Actual: <strong id="currentName">—</strong></span>
+          <span class="stat"><span class="stat-dot ok"></span>Enviados <b id="sentCount">0</b></span>
+          <span class="stat"><span class="stat-dot err"></span>Fallidos <b id="failedCount">0</b></span>
+          <span class="stat current" id="currentRecipient" style="display:none">Actual: <b id="currentName">—</b></span>
         </div>
       </div>
     </section>
 
     <!-- Actions -->
     <div class="actions">
-      <button id="startBtn" class="btn btn-primary">▶ Iniciar</button>
-      <button id="stopBtn" class="btn btn-danger" disabled>⏹ Detener</button>
+      <button id="startBtn" class="btn btn-primary">Iniciar</button>
+      <button id="stopBtn" class="btn btn-ghost" disabled>Detener</button>
     </div>
 
     <!-- Footer -->
-    <footer class="footer">
-      <span>Instagram DM Automator v2.0</span>
-    </footer>
+    <footer class="app-footer">Instagram DM Automator</footer>
   </div>
 
   <script src="../core/defaults.js"></script>

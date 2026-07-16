@@ -14,6 +14,7 @@ var els = {
   startBtn: document.getElementById('startBtn'),
   stopBtn: document.getElementById('stopBtn'),
   statusDot: document.getElementById('statusDot'),
+  statusPill: document.getElementById('statusPill'),
   statusText: document.getElementById('statusText'),
   progressFraction: document.getElementById('progressFraction'),
   progressPercent: document.getElementById('progressPercent'),
@@ -71,23 +72,24 @@ async function updateProgress() {
     var data = await chrome.storage.local.get('igDmProgress');
     var p = data.igDmProgress || DEFAULT_PROGRESS;
 
-    // Status dot + text
+    // Status dot + pill + text
     var statusMap = {
-      'idle':     { cls: 'idle',   text: '● Listo' },
-      'scanning': { cls: 'active', text: '🔍 Escaneando...' },
-      'sending':  { cls: 'active', text: '📨 Enviando...' },
-      'paused':   { cls: 'paused', text: '⚠ Pausado (CAPTCHA)' },
-      'stopped':  { cls: 'idle',   text: '⏹ Detenido' },
-      'done':     { cls: 'done',   text: '✅ Completado' }
+      'idle':     { cls: 'idle',   pill: 'idle',    text: 'Listo' },
+      'scanning': { cls: 'active', pill: 'active',  text: 'Escaneando' },
+      'sending':  { cls: 'active', pill: 'active',  text: 'Enviando' },
+      'paused':   { cls: 'paused', pill: 'paused',  text: 'Pausado (CAPTCHA)' },
+      'stopped':  { cls: 'idle',   pill: 'idle',    text: 'Detenido' },
+      'done':     { cls: 'done',   pill: 'done',    text: 'Completado' }
     };
     var state = statusMap[p.status] || statusMap['idle'];
     els.statusDot.className = 'status-dot ' + state.cls;
+    els.statusPill.className = 'status-pill ' + state.pill;
     els.statusText.textContent = state.text;
 
     // Progress numbers
     els.progressFraction.textContent = p.current + '/' + p.total;
     var pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
-    els.progressPercent.textContent = '(' + pct + '%)';
+    els.progressPercent.textContent = pct + '%';
     els.progressFill.style.width = pct + '%';
 
     // Counts
@@ -106,6 +108,7 @@ async function updateProgress() {
     var running = (p.status === 'scanning' || p.status === 'sending' || p.status === 'paused');
     els.startBtn.disabled = running;
     els.stopBtn.disabled = !running;
+    els.stopBtn.classList.toggle('is-danger', running);
   } catch (e) {
     // Storage might not be available yet
   }
