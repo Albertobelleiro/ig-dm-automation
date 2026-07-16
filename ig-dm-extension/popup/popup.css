@@ -473,7 +473,26 @@ body {
 }
 .btn-ghost:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .btn-sm { flex: 0 0 auto; padding: 6px 12px; min-height: 30px; font-size: 12px; }
+.btn-tight { flex: 0 1 auto; padding: 5px 10px; min-height: 28px; font-size: 11px; white-space: nowrap; }
 .btn-block { width: 100%; }
+
+/* Sub-action row (reload / force-reset) */
+.actions-sub {
+  justify-content: flex-end;
+  padding: 2px 14px 10px;
+  border-top: none;
+  gap: 6px;
+}
+.actions-sub .btn-ghost {
+  background: transparent;
+  color: var(--text-3);
+  border-color: transparent;
+}
+.actions-sub .btn-ghost:hover {
+  color: var(--text-2);
+  background: var(--panel);
+  border-color: var(--border);
+}
 .btn-accent {
   background: var(--accent);
   color: #fff;

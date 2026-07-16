@@ -62,6 +62,10 @@ async function clearSession() {
 
 // ── Message listener: commands from popup ──
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+  if (msg.action === 'PING') {
+    sendResponse({ pong: true, running: _running });
+    return false;
+  }
   if (msg.action === 'START') {
     if (_running) { sendResponse({ alreadyRunning: true }); return false; }
     _stopFlag = false;

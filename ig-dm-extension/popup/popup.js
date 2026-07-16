@@ -1,5 +1,5 @@
-// IG DM Automator — Popup Script
-// Tabs (mode) + auto-open Direct + robust Start + Resume + progress polling
+// IG DM Automator — Popup Script v2.1
+// PING-first handshake, timeout-safe sendToContent, force-reset, auto-reload
 
 // ── DOM refs ──
 var els = {
@@ -8,6 +8,8 @@ var els = {
   emptyState: document.getElementById('emptyState'),
   workUI: document.getElementById('workUI'),
   openDirectBtn: document.getElementById('openDirectBtn'),
+  reloadDirectBtn: document.getElementById('reloadDirectBtn'),
+  resetBtn: document.getElementById('resetBtn'),
   message: document.getElementById('message'),
   delayMin: document.getElementById('delayMin'),
   delayMax: document.getElementById('delayMax'),
@@ -36,7 +38,7 @@ var _pollInterval = null;
 var _currentTabId = null;
 var _mode = 'official';
 
-// Mode → derived flags (content script still reads dryRun + personalized)
+// Mode → derived flags
 var MODE_FLAGS = {
   official: { dryRun: false, personalized: false, hint: 'Envío real · sin personalizar' },
   dryrun:   { dryRun: true,  personalized: false, hint: 'Prueba · no se envía nada' },
@@ -45,6 +47,9 @@ var MODE_FLAGS = {
 
 var DIRECT_URL = 'https://www.instagram.com/direct/inbox/';
 var DIRECT_TAB_PATTERNS = ['*://www.instagram.com/direct/*', '*://instagram.com/direct/*'];
+
+// ── Sleep helper ──
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
 // ── Load config from storage and populate form ──
 async function loadAndPopulate() {
@@ -89,17 +94,14 @@ async function saveConfig() {
 // ── Mode switching ──
 function setMode(mode, ensureNombre) {
   _mode = mode;
-  // Active tab pill
   var tabs = els.modeTabs.querySelectorAll('.tab');
   tabs.forEach(function (t) { t.classList.toggle('is-active', t.dataset.mode === mode); });
-  // Hint text
   els.modeHint.textContent = (MODE_FLAGS[mode] || MODE_FLAGS.official).hint;
 
-  // Custom mode → auto-add {nombre} greeting if missing
   if (mode === 'custom' && ensureNombre) {
     var msg = els.message.value || '';
     if (!msg.includes('{nombre}')) {
-      els.message.value = '¡Hey {nombre}! 👋\n\n' + msg;
+      els.message.value = '\u00a1Hey {nombre}! \ud83d\udc4b\n\n' + msg;
     }
   }
 }
@@ -112,47 +114,59 @@ async function getDirectTab() {
   } catch (e) { return null; }
 }
 
-// ── Open Instagram Direct if not already open ──
-async function openDirectIfNeeded() {
-  var tab = await getDirectTab();
-  if (tab) return tab;
-  await chrome.tabs.create({ url: DIRECT_URL, active: true });
-  return null; // popup will likely close; caller re-checks later
+// ── Send a message to a tab with timeout ──
+function sendWithTimeout(tabId, message, timeoutMs) {
+  timeoutMs = timeoutMs || 5000;
+  return Promise.race([
+    chrome.tabs.sendMessage(tabId, message),
+    new Promise(function (_, reject) {
+      setTimeout(function () { reject(new Error('timeout')); }, timeoutMs);
+    })
+  ]);
 }
 
-// ── Send a message to the content script, retry until it answers ──
-async function sendToContent(tabId, message, retries) {
-  retries = retries || 10;
+// ── Ping content script — retry until it responds or we give up ──
+async function pingContentScript(tabId, retries) {
+  retries = retries || 15;
   for (var i = 0; i < retries; i++) {
     try {
-      return await chrome.tabs.sendMessage(tabId, message);
+      var resp = await sendWithTimeout(tabId, { action: 'PING' }, 3000);
+      if (resp && resp.pong) return resp;
     } catch (e) {
-      // Content script not ready yet — wait and retry
-      await new Promise(function (r) { setTimeout(r, 600); });
+      // Not ready yet — wait and retry
     }
+    await sleep(600);
   }
   return null;
 }
 
-// ── Start sending ──
+// ── Send START (will not set progress until content script confirms) ──
 async function handleStart() {
   await saveConfig();
 
+  // Step 1: Find or open Direct tab
   var tab = await getDirectTab();
   if (!tab) {
-    // Open it; popup may close. User clicks Iniciar again after it loads.
     await chrome.tabs.create({ url: DIRECT_URL, active: true });
-    return;
+    return; // popup may close; user clicks Iniciar again on next popup open
   }
   _currentTabId = tab.id;
 
-  // Make sure the tab is actually showing Direct (SPA might be elsewhere)
-  if (!/\/direct\//.test(tab.url || '')) {
-    await chrome.tabs.update(tab.id, { url: DIRECT_URL, active: true });
-    await waitTabLoaded(tab.id);
+  // Step 2: Verify content script is alive via PING
+  var pong = await pingContentScript(tab.id, 15); // ~10s total
+  if (!pong) {
+    // Last resort: service worker should have auto-injected via webNavigation.
+    // If it still didn't work, ask user to reload the page.
+    alert(
+      '\u26a0 No se pudo conectar con Instagram Direct.\n\n' +
+      'Aseg\u00farate de que la pesta\u00f1a de Instagram Direct est\u00e9 ' +
+      'totalmente cargada y visible.\n\n' +
+      'Prueba: pulsa "Recargar" abajo para refrescar la p\u00e1gina.'
+    );
+    return;
   }
 
-  // Reset progress + clear any old session (fresh Iniciar)
+  // Step 3: Only NOW set progress to scanning and clear old session
   await chrome.storage.local.set({
     igDmProgress: {
       status: 'scanning', total: 0, current: 0, sent: 0, failed: 0,
@@ -161,11 +175,28 @@ async function handleStart() {
   });
   await chrome.storage.local.remove('igDmSession');
 
-  // Send START (retry until content script answers)
-  var resp = await sendToContent(tab.id, { action: 'START' }, 12);
-  if (!resp) {
-    alert('⚠ No se pudo iniciar. Recarga la pestaña de Instagram Direct e inténtalo de nuevo.');
+  // Step 4: Send START with timeout
+  try {
+    var resp = await sendWithTimeout(tab.id, { action: 'START' }, 6000);
+    if (!resp) {
+      throw new Error('No response');
+    }
+  } catch (e) {
+    // Revert progress to idle if START never reached content script
+    await chrome.storage.local.set({
+      igDmProgress: {
+        status: 'idle', total: 0, current: 0, sent: 0, failed: 0,
+        errors: [], currentName: '', startedAt: null
+      }
+    });
+    alert(
+      '\u26a0 No se pudo iniciar el env\u00edo.\n\n' +
+      'Recarga la p\u00e1gina de Instagram Direct e int\u00e9ntalo de nuevo.'
+    );
+    return;
   }
+  // If we reach here, START was delivered successfully.
+  // Progress updates come from the content script via storage polling.
 }
 
 // ── Resume from a saved session ──
@@ -176,22 +207,66 @@ async function handleResume() {
     return;
   }
   _currentTabId = tab.id;
-  var resp = await sendToContent(tab.id, { action: 'RESUME' }, 12);
-  if (!resp) {
-    alert('⚠ No se pudo reanudar. Recarga la pestaña de Instagram Direct e inténtalo de nuevo.');
+
+  // Ping first to ensure content script exists
+  var pong = await pingContentScript(tab.id, 8);
+  if (!pong) {
+    alert('\u26a0 No se pudo reanudar. Recarga la p\u00e1gina de Instagram Direct.');
+    return;
+  }
+
+  try {
+    await sendWithTimeout(tab.id, { action: 'RESUME' }, 5000);
+  } catch (e) {
+    // resume might hang or timeout — silently fail, polling will show the truth
   }
 }
 
 // ── Stop sending ──
 async function handleStop() {
+  // Try to find the content script tab
   var tab = null;
   if (_currentTabId) { try { tab = await chrome.tabs.get(_currentTabId); } catch (e) {} }
   if (!tab) tab = await getDirectTab();
+
   if (tab) {
-    try { await chrome.tabs.sendMessage(tab.id, { action: 'STOP' }); } catch (e) {}
+    try {
+      await sendWithTimeout(tab.id, { action: 'STOP' }, 3000);
+      // Content script will keep the session and set status 'stopped'.
+      return; // polling shows resume banner
+    } catch (e) {
+      // Content script not reachable — force-reset below
+    }
   }
-  // The content script keeps the session + sets status 'stopped'.
-  // UI will reflect the resume banner on next poll.
+
+  // Force-reset: no content script or tab gone
+  await chrome.storage.local.set({
+    igDmProgress: {
+      status: 'idle', total: 0, current: 0, sent: 0, failed: 0,
+      errors: [], currentName: '', startedAt: null
+    }
+  });
+}
+
+// ── Force-reset progress (clears stuck state) ──
+async function handleReset() {
+  await chrome.storage.local.set({
+    igDmProgress: {
+      status: 'idle', total: 0, current: 0, sent: 0, failed: 0,
+      errors: [], currentName: '', startedAt: null
+    }
+  });
+  await chrome.storage.local.remove('igDmSession');
+}
+
+// ── Reload Direct tab ──
+async function handleReload() {
+  var tab = await getDirectTab();
+  if (tab) {
+    await chrome.tabs.reload(tab.id);
+  } else {
+    await chrome.tabs.create({ url: DIRECT_URL, active: true });
+  }
 }
 
 // ── Wait for a tab to finish loading ──
@@ -208,7 +283,7 @@ function waitTabLoaded(tabId) {
       if (id === tabId && info.status === 'complete') finish();
     }
     chrome.tabs.onUpdated.addListener(onUpdated);
-    setTimeout(finish, 8000); // safety timeout
+    setTimeout(finish, 8000);
   });
 }
 
@@ -249,7 +324,7 @@ async function updateProgress() {
       els.currentRecipient.style.display = 'none';
     }
 
-    // Resume banner: show when there's a saved stopped/paused session + not running
+    // Resume banner: session exists + not running + stopped/paused/idle
     var running = (p.status === 'scanning' || p.status === 'sending');
     var canResume = !!session && !running && (p.status === 'stopped' || p.status === 'paused' || p.status === 'idle');
     if (canResume) {
@@ -257,9 +332,9 @@ async function updateProgress() {
       var remaining = (p.total || (session && session.conversations ? session.conversations.length : 0)) - p.current;
       if (p.status === 'paused') {
         els.resumeBanner.querySelector('.resume-title').textContent = 'CAPTCHA pendiente';
-        els.resumeSub.innerHTML = 'Resuélvelo en la página y pulsa Reanudar';
+        els.resumeSub.innerHTML = 'Resu\u00e9lvelo en la p\u00e1gina y pulsa Reanudar';
       } else {
-        els.resumeBanner.querySelector('.resume-title').textContent = 'Sesión pausada';
+        els.resumeBanner.querySelector('.resume-title').textContent = 'Sesi\u00f3n pausada';
         els.resumeSub.innerHTML = 'Quedan <b>' + Math.max(0, remaining) + '</b> mensajes';
       }
     } else {
@@ -275,7 +350,7 @@ async function updateProgress() {
   }
 }
 
-// ── Empty-state detection: show Direct-not-open UI if no Direct tab ──
+// ── Empty-state detection ──
 async function refreshEmptyState() {
   var tab = await getDirectTab();
   if (!tab) {
@@ -308,13 +383,15 @@ els.resumeBtn.addEventListener('click', handleResume);
 els.openDirectBtn.addEventListener('click', async function () {
   await chrome.tabs.create({ url: DIRECT_URL, active: true });
 });
+els.reloadDirectBtn.addEventListener('click', handleReload);
+els.resetBtn.addEventListener('click', handleReset);
 
 // Mode tabs
 els.modeTabs.addEventListener('click', function (e) {
   var tab = e.target.closest('.tab');
   if (!tab) return;
   var mode = tab.dataset.mode;
-  setMode(mode, true);   // ensureNombre when switching to custom
+  setMode(mode, true);
   saveConfig();
 });
 

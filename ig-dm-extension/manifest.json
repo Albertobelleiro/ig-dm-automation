@@ -10,7 +10,9 @@
   },
   "permissions": [
     "storage",
-    "tabs"
+    "tabs",
+    "scripting",
+    "webNavigation"
   ],
   "host_permissions": [
     "https://www.instagram.com/*",

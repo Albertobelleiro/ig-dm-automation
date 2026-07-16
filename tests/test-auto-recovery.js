@@ -93,6 +93,11 @@ var popupJs = fs.readFileSync('/Volumes/SSD/malalts/ig-dm-extension/popup/popup.
 assert('Has handleStart', popupJs.includes('async function handleStart'));
 assert('Has handleStop', popupJs.includes('async function handleStop'));
 assert('Has handleResume', popupJs.includes('async function handleResume'));
+assert('Has handleReset', popupJs.includes('async function handleReset'));
+assert('Has handleReload', popupJs.includes('async function handleReload'));
+assert('Has sendWithTimeout', popupJs.includes('function sendWithTimeout'));
+assert('Has pingContentScript', popupJs.includes('async function pingContentScript'));
+assert('Sends PING before START', /pingContentScript.*PING/.test(popupJs) || popupJs.includes("action: 'PING'"));
 assert('Has updateProgress', popupJs.includes('async function updateProgress'));
 assert('Has saveConfig', popupJs.includes('async function saveConfig'));
 assert('Has progress polling 500ms', popupJs.includes(', 500)') && popupJs.includes('setInterval'));
@@ -120,6 +125,9 @@ console.log('Test 5: Service worker');
 
 var sw = fs.readFileSync('/Volumes/SSD/malalts/ig-dm-extension/background/service-worker.js', 'utf-8');
 assert('Has onInstalled', sw.includes('chrome.runtime.onInstalled'));
+assert('Has webNavigation.onHistoryStateUpdated', sw.includes('onHistoryStateUpdated'));
+assert('Has tryInject function', sw.includes('function tryInject'));
+assert('Has PING detection', sw.includes("action: 'PING'"));
 assert('Initializes config', sw.includes("chrome.storage.local.set"));
 assert('Initializes progress', sw.includes('igDmProgress'));
 console.log();
