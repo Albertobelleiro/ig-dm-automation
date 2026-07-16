@@ -1,20 +1,47 @@
 {
   "manifest_version": 3,
-  "name": "IG DM Auto-Recovery",
-  "version": "1.1",
-  "description": "Auto-reinjects Instagram DM automation scripts after page reload. Works with ig-dm-oficial.js, ig-dm-prueba.js, and ig-dm-personalized.js.",
+  "name": "IG DM Automator",
+  "version": "2.0",
+  "description": "Automatiza el envío de mensajes directos en Instagram. Configura mensaje, delays, filtros y controla el progreso desde un popup.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "tabs"
+  ],
   "host_permissions": [
     "https://www.instagram.com/*",
     "https://instagram.com/*"
   ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
   "content_scripts": [
     {
       "matches": [
         "https://www.instagram.com/direct/*",
         "https://instagram.com/direct/*"
       ],
-      "js": ["content.js"],
+      "js": ["core/defaults.js", "core/storage.js", "content/content.js"],
       "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "IG DM Automator",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["core/*"],
+      "matches": ["https://www.instagram.com/*", "https://instagram.com/*"]
     }
   ]
 }
